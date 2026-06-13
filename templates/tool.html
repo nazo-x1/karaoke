@@ -65,6 +65,18 @@
 </body>
 <script>
     const server = "{{ prefix }}";
+
+    function appendUploadFile(form_data, file) {
+        form_data.append("file", file, file.name);
+        form_data.append("filename", file.name);
+    }
+
+    function setPreprocessDownload(linkId, filename) {
+        const el = document.getElementById(linkId);
+        el.href = server + "/song/download/preprocess/" + encodeURIComponent(filename);
+        el.download = filename;
+    }
+
     document.getElementById("file-upload").addEventListener('click', () => {
         let fileUpload_input = document.getElementById("file-input");
         fileUpload_input.click();
@@ -79,7 +91,7 @@
             let failure = 0;
             for (let i=0; i<total_files; i++) {
                 let form_data = new FormData();
-                form_data.append("file", files[i]);
+                appendUploadFile(form_data, files[i]);
                 form_data.append("index", (i + 1).toString());
 
                 let xhr = new XMLHttpRequest();
@@ -117,7 +129,7 @@
             show_modal_cover();
             for (let i=0; i<total_files; i++) {
                 let form_data = new FormData();
-                form_data.append("file", files[i]);
+                appendUploadFile(form_data, files[i]);
                 form_data.append("index", (i + 1).toString());
 
                 let xhr = new XMLHttpRequest();
@@ -153,7 +165,7 @@
             show_modal_cover();
             for (let i=0; i<total_files; i++) {
                 let form_data = new FormData();
-                form_data.append("file", files[i]);
+                appendUploadFile(form_data, files[i]);
                 form_data.append("index", (i + 1).toString());
 
                 let xhr = new XMLHttpRequest();
@@ -186,13 +198,13 @@
         show_modal_cover();
         $.ajax({
             type: "GET",
-            url: server + "/song/deal/video/" + file_name,
+            url: server + "/song/deal/video/" + encodeURIComponent(file_name),
             success: function (data) {
                 if (data.code === 0) {
                     document.getElementById("mp3-name").value = data['data']['mp3'];
                     document.getElementById("mp4-name").value = data['data']['video'];
-                    document.getElementById("audio-down").href = "/static/videos/" + data['data']['mp3'];
-                    document.getElementById("video-down").href = "/static/videos/" + data['data']['video'];
+                    setPreprocessDownload("audio-down", data['data']['mp3']);
+                    setPreprocessDownload("video-down", data['data']['video']);
                 } else {
                     $.Toast(data.msg, 'error');
                 }
@@ -209,11 +221,11 @@
         show_modal_cover();
         $.ajax({
             type: "GET",
-            url: server + "/song/convert/audio/" + file_name,
+            url: server + "/song/convert/audio/" + encodeURIComponent(file_name),
             success: function (data) {
                 if (data.code === 0) {
                     document.getElementById("mp3-name-audio").value = data['data']['mp3'];
-                    document.getElementById("audio-down-audio").href = "/static/videos/" + data['data']['mp3'];
+                    setPreprocessDownload("audio-down-audio", data['data']['mp3']);
                 } else {
                     $.Toast(data.msg, 'error');
                 }
@@ -230,11 +242,11 @@
         show_modal_cover();
         $.ajax({
             type: "GET",
-            url: server + "/song/convert/video/" + file_name,
+            url: server + "/song/convert/video/" + encodeURIComponent(file_name),
             success: function (data) {
                 if (data.code === 0) {
                     document.getElementById("mp4-name-video").value = data['data']['mp4'];
-                    document.getElementById("audio-down-video").href = "/static/videos/" + data['data']['mp4'];
+                    setPreprocessDownload("audio-down-video", data['data']['mp4']);
                 } else {
                     $.Toast(data.msg, 'error');
                 }

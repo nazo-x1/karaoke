@@ -98,6 +98,11 @@ async def convert_video(file_name: str, query: Request):
     return result
 
 
+@router.get('/download/preprocess/{file_name}', summary="下载预处理文件")
+async def download_preprocess(file_name: str):
+    return await views.download_preprocess_file(file_name)
+
+
 @router.get('/local/import', summary="从本地路径导入歌曲文件")
 async def import_local(local_path: str, query: Request):
     result = await views.import_local_file(local_path)

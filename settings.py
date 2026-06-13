@@ -3,7 +3,6 @@
 # @Author: leeyoshinari
 
 import os
-import shutil
 import sys
 import configparser
 import logging.handlers
@@ -37,12 +36,10 @@ TORTOISE_ORM = {
     "timezone": "Asia/Shanghai"
 }
 
-CONTENT_TYPE = {'mp4': 'video/mp4', 'mp3': 'audio/mpeg'}
+CONTENT_TYPE = {'mp4': 'video/mp4', 'mp3': 'audio/mpeg', 'wav': 'audio/wav'}
 
 VIDEO_PATH = os.path.join(path, 'static', 'videos')
-if os.path.exists(VIDEO_PATH):
-    shutil.rmtree(VIDEO_PATH)
-os.mkdir(VIDEO_PATH)
+os.makedirs(VIDEO_PATH, exist_ok=True)
 
 log_path = os.path.join(path, 'logs')
 if not os.path.exists(log_path):

@@ -19,6 +19,41 @@ clients: List[asyncio.Queue] = []
 ffmpeg_cmd = 'ffmpeg'
 
 
+def _safe_filename(filename: str) -> str:
+    if not filename:
+        return ''
+    name = os.path.basename(unquote(filename.strip()))
+    return name.replace('\x00', '').strip()
+
+
+def _stem_and_ext(filename: str) -> tuple:
+    name = _safe_filename(filename)
+    if '.' in name:
+        stem, ext = name.rsplit('.', 1)
+        return stem, ext.lower()
+    return name, ''
+
+
+def _remove_if_exists(file_path: str):
+    if os.path.isfile(file_path):
+        os.remove(file_path)
+
+
+def run_ffmpeg(args: list):
+    cmd = [ffmpeg_cmd, '-y', '-nostdin'] + args
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+
+async def read_preprocess_file(file_path, start_index=0):
+    with open(file_path, 'rb') as f:
+        f.seek(start_index)
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            yield chunk
+
+
 async def broadcast_data(data: dict):
     for client in clients[:]:
         try:
@@ -248,13 +283,20 @@ async def set_singed(file_id: int) -> Result:
 
 async def upload_video(query) -> Result:
     result = Result()
-    query = await query.form()
-    file_name = query['file'].filename
-    data = query['file'].file
+    form = await query.form()
+    upload = form['file']
+    file_name = _safe_filename(form.get('filename') or upload.filename)
+    data = upload.file
     try:
-        file_format = file_name.split(".")[-1]
-        name = file_name.replace(f".{file_format}", "")
-        file_path = os.path.join(VIDEO_PATH, f"{name}_origin.{file_format}")
+        if not file_name:
+            result.code = 1
+            result.msg = "无法获取文件名"
+            return result
+        stem, file_format = _stem_and_ext(file_name)
+        if not file_format:
+            file_format = 'mp4'
+            stem = file_name
+        file_path = os.path.join(VIDEO_PATH, f"{stem}_origin.{file_format}")
         with open(file_path, 'wb') as f:
             f.write(data.read())
         result.msg = f"{file_name} 上传成功"
@@ -269,23 +311,52 @@ async def upload_video(query) -> Result:
     return result
 
 
+async def download_preprocess_file(file_name: str):
+    from urllib.parse import quote
+    from karaoke.responses import StreamResponse
+    from settings import CONTENT_TYPE
+    try:
+        file_name = _safe_filename(file_name)
+        if not file_name:
+            return Result(code=1, msg="无效的文件名")
+        file_path = os.path.join(VIDEO_PATH, file_name)
+        if not os.path.isfile(file_path):
+            return Result(code=1, msg="文件不存在")
+        file_format = file_name.rsplit('.', 1)[-1].lower()
+        headers = {
+            'Content-Length': str(os.path.getsize(file_path)),
+            'Content-Disposition': f"attachment; filename*=UTF-8''{quote(file_name)}",
+        }
+        return StreamResponse(
+            read_preprocess_file(file_path),
+            media_type=CONTENT_TYPE.get(file_format, 'application/octet-stream'),
+            headers=headers,
+        )
+    except:
+        logger.error(traceback.format_exc())
+        return Result(code=1, msg="系统错误")
+
+
 async def deal_video(file_name: str) -> Result:
     result = Result()
     try:
-        file_name = unquote(file_name)
-        name = file_name.replace(".mp4", "")
-        mp4_file = os.path.join(VIDEO_PATH, f"{name}_origin.mp4")
-        mp3_file = os.path.join(VIDEO_PATH, f"{name}.wav")
-        cmd1 = [ffmpeg_cmd, '-i', mp4_file, '-q:a', '0', '-map', 'a', mp3_file]
-        subprocess.run(cmd1, check=True)
-        no_voice_file = os.path.join(VIDEO_PATH, f"{name}_voice.mp4")
-        cmd2 = [ffmpeg_cmd, '-i', mp4_file, '-an', '-vcodec', 'copy', no_voice_file]
-        subprocess.run(cmd2, check=True)
-        video_file = os.path.join(VIDEO_PATH, f"{name}.mp4")
-        cmd3 = [ffmpeg_cmd, '-i', no_voice_file, '-map_metadata', '0', '-c:v', 'copy', '-c:a', 'copy', '-movflags', '+faststart', video_file]
-        subprocess.run(cmd3, check=True)
-        result.data = {"mp3": f"{name}.wav", "video": f"{name}.mp4"}
-        logger.info(result.msg)
+        stem, ext = _stem_and_ext(file_name)
+        if not stem:
+            result.code = 1
+            result.msg = "无效的文件名"
+            return result
+        mp4_file = os.path.join(VIDEO_PATH, f"{stem}_origin.mp4")
+        mp3_file = os.path.join(VIDEO_PATH, f"{stem}.wav")
+        no_voice_file = os.path.join(VIDEO_PATH, f"{stem}_voice.mp4")
+        video_file = os.path.join(VIDEO_PATH, f"{stem}.mp4")
+        for path in (mp3_file, no_voice_file, video_file):
+            _remove_if_exists(path)
+        run_ffmpeg(['-i', mp4_file, '-q:a', '0', '-map', 'a', mp3_file])
+        run_ffmpeg(['-i', mp4_file, '-an', '-vcodec', 'copy', no_voice_file])
+        run_ffmpeg(['-i', no_voice_file, '-map_metadata', '0', '-c:v', 'copy', '-c:a', 'copy',
+                    '-movflags', '+faststart', video_file])
+        result.data = {"mp3": f"{stem}.wav", "video": f"{stem}.mp4"}
+        logger.info(f"{stem} 视频预处理完成")
     except:
         logger.error(traceback.format_exc())
         result.code = 1
@@ -296,15 +367,17 @@ async def deal_video(file_name: str) -> Result:
 async def convert_video(file_name: str) -> Result:
     result = Result()
     try:
-        file_name = unquote(file_name)
-        file_format = file_name.split(".")[-1]
-        name = file_name.replace(f".{file_format}", "")
-        audio_file = os.path.join(VIDEO_PATH, f"{name}_origin.{file_format}")
-        mp4_file = os.path.join(VIDEO_PATH, f"{name}.mp4")
-        cmd = [ffmpeg_cmd, '-i', audio_file, '-c:v', 'libx264', '-c:a', 'aac', mp4_file]
-        subprocess.run(cmd, check=True)
-        result.data = {"mp4": f"{name}.mp4", "video": f"{name}.{file_format}"}
-        logger.info(result.msg)
+        stem, file_format = _stem_and_ext(file_name)
+        if not stem or not file_format:
+            result.code = 1
+            result.msg = "无效的文件名"
+            return result
+        audio_file = os.path.join(VIDEO_PATH, f"{stem}_origin.{file_format}")
+        mp4_file = os.path.join(VIDEO_PATH, f"{stem}.mp4")
+        _remove_if_exists(mp4_file)
+        run_ffmpeg(['-i', audio_file, '-c:v', 'libx264', '-c:a', 'aac', mp4_file])
+        result.data = {"mp4": f"{stem}.mp4", "video": f"{stem}.{file_format}"}
+        logger.info(f"{stem} 视频转 mp4 完成")
     except:
         logger.error(traceback.format_exc())
         result.code = 1
@@ -315,15 +388,17 @@ async def convert_video(file_name: str) -> Result:
 async def convert_audio(file_name: str) -> Result:
     result = Result()
     try:
-        file_name = unquote(file_name)
-        file_format = file_name.split(".")[-1]
-        name = file_name.replace(f".{file_format}", "")
-        audio_file = os.path.join(VIDEO_PATH, f"{name}_origin.{file_format}")
-        mp3_file = os.path.join(VIDEO_PATH, f"{name}.mp3")
-        cmd = [ffmpeg_cmd, '-i', audio_file, '-codec:a', 'libmp3lame', mp3_file]
-        subprocess.run(cmd, check=True)
-        result.data = {"mp3": f"{name}.mp3", "audio": f"{name}.{file_format}"}
-        logger.info(result.msg)
+        stem, file_format = _stem_and_ext(file_name)
+        if not stem or not file_format:
+            result.code = 1
+            result.msg = "无效的文件名"
+            return result
+        audio_file = os.path.join(VIDEO_PATH, f"{stem}_origin.{file_format}")
+        mp3_file = os.path.join(VIDEO_PATH, f"{stem}.mp3")
+        _remove_if_exists(mp3_file)
+        run_ffmpeg(['-i', audio_file, '-codec:a', 'libmp3lame', mp3_file])
+        result.data = {"mp3": f"{stem}.mp3", "audio": f"{stem}.{file_format}"}
+        logger.info(f"{stem} 音频转 mp3 完成")
     except:
         logger.error(traceback.format_exc())
         result.code = 1
