@@ -231,5 +231,5 @@ async def wait_playback_ready(song_id: int, timeout: float = 3600.0) -> dict:
 
 
 async def _broadcast_ready(song_id: int) -> None:
-    from karaoke import views
-    await views.broadcast_data({'code': 9, 'data': str(song_id)})
+    from karaoke.events.bus import event_bus
+    await event_bus.publish_prepare_ready(song_id)

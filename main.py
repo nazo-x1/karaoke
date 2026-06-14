@@ -4,12 +4,14 @@
 
 import os
 import socket
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from tortoise.contrib.fastapi import register_tortoise
 import settings
-import karaoke.urls as my_urls
+from karaoke.api.router import router as v1_router
+from karaoke.services.queue_service import QueueService
 
 
 prefix = ''
@@ -63,7 +65,14 @@ async def deal_song(request: Request):
     )
 
 
-app.include_router(my_urls.router, prefix=prefix)
+app.include_router(v1_router, prefix=prefix)
+
+
+@app.on_event('startup')
+async def startup_event():
+    from karaoke.db_schema import ensure_schema
+    await asyncio.to_thread(ensure_schema)
+    await QueueService().init_on_startup()
 
 
 if __name__ == "__main__":
