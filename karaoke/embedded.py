@@ -5,13 +5,15 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from karaoke.audio_layout import get_track_index, has_dual_roles, parse_audio_layout, serialize_audio_layout
 from karaoke.media import (
+    ProgressCallback,
     build_audio_layout,
     extract_audio_track,
     prepare_video_only_mp4,
+    probe_media_info,
 )
 from karaoke.models import Song
 from settings import PLAY_CACHE_PATH, logger
@@ -100,7 +102,15 @@ def is_cache_valid(song: Song, layout: dict, paths: EmbeddedPaths) -> bool:
     )
 
 
-def ensure_embedded_cache(song: Song, layout: dict, prepare: bool = False) -> EmbeddedPaths:
+PrepareProgressCallback = Callable[[float, str, str], None]
+
+
+def ensure_embedded_cache(
+    song: Song,
+    layout: dict,
+    prepare: bool = False,
+    on_progress: Optional[PrepareProgressCallback] = None,
+) -> EmbeddedPaths:
     cache_dir = cache_dir_for(song, layout)
     paths = expected_paths(cache_dir)
     paths.cache_dir = cache_dir
@@ -120,11 +130,41 @@ def ensure_embedded_cache(song: Song, layout: dict, prepare: bool = False) -> Em
         paths.ready = False
         return paths
 
-    ok_video = prepare_video_only_mp4(song.source_path, paths.video)
-    ok_vocals = extract_audio_track(song.source_path, vocals_idx, paths.vocals)
-    ok_accomp = extract_audio_track(song.source_path, accomp_idx, paths.accompaniment)
+    info = probe_media_info(song.source_path)
+    duration = info.duration if info and info.duration > 0 else None
+
+    def report(overall: float, phase: str, message: str) -> None:
+        if on_progress:
+            on_progress(overall, phase, message)
+
+    def step_progress(base: float, span: float) -> ProgressCallback:
+        def inner(pct: float) -> None:
+            report(base + span * (pct / 100.0), phase_holder['phase'], phase_holder['message'])
+        return inner
+
+    phase_holder = {'phase': 'embedded_video', 'message': 'MKV 视频轨处理中'}
+
+    report(0, 'embedded_video', 'MKV 视频轨处理中')
+    ok_video = prepare_video_only_mp4(
+        song.source_path, paths.video, on_progress=step_progress(0, 40),
+    )
+
+    phase_holder.update({'phase': 'embedded_vocals', 'message': '提取原唱音轨'})
+    report(40, 'embedded_vocals', '提取原唱音轨')
+    ok_vocals = extract_audio_track(
+        song.source_path, vocals_idx, paths.vocals,
+        on_progress=step_progress(40, 15), duration_sec=duration,
+    )
+
+    phase_holder.update({'phase': 'embedded_accompaniment', 'message': '提取伴奏音轨'})
+    report(55, 'embedded_accompaniment', '提取伴奏音轨')
+    ok_accomp = extract_audio_track(
+        song.source_path, accomp_idx, paths.accompaniment,
+        on_progress=step_progress(55, 40), duration_sec=duration,
+    )
 
     if ok_video and ok_vocals and ok_accomp:
+        report(100, 'done', '缓存就绪')
         _write_manifest(cache_dir, song, layout)
         paths.ready = True
         logger.info('embedded cache ready: song=%s dir=%s', song.id, cache_dir)

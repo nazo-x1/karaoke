@@ -4,9 +4,15 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
+
+ProgressCallback = Callable[[float], None]
+
+_DURATION_RE = re.compile(r'Duration: (\d+):(\d+):(\d+(?:\.\d+)?)')
+_TIME_RE = re.compile(r'time=(\d+):(\d+):(\d+(?:\.\d+)?)')
 
 from settings import CONTENT_TYPE, PLAY_CACHE_PATH, logger
 
@@ -243,7 +249,61 @@ def _ffmpeg_maps(video: StreamInfo, audio: Optional[StreamInfo]) -> list:
     return maps
 
 
-def remux_to_mp4(source_path: str, dest_path: str, video: StreamInfo, audio: Optional[StreamInfo]) -> bool:
+def _parse_ffmpeg_timestamp(h: str, m: str, s: str) -> float:
+    return int(h) * 3600 + int(m) * 60 + float(s)
+
+
+def _run_ffmpeg_with_progress(
+    cmd: list,
+    duration_sec: Optional[float] = None,
+    on_progress: Optional[ProgressCallback] = None,
+    timeout: float = 3600,
+) -> bool:
+    if not on_progress:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=True)
+        return True
+
+    proc = subprocess.Popen(
+        cmd,
+        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        text=True,
+        bufsize=1,
+    )
+    last_pct = -1.0
+    try:
+        assert proc.stderr is not None
+        for line in proc.stderr:
+            if duration_sec is None or duration_sec <= 0:
+                dm = _DURATION_RE.search(line)
+                if dm:
+                    duration_sec = _parse_ffmpeg_timestamp(*dm.groups())
+            tm = _TIME_RE.search(line)
+            if tm and duration_sec and duration_sec > 0:
+                current = _parse_ffmpeg_timestamp(*tm.groups())
+                pct = min(99.0, (current / duration_sec) * 100.0)
+                if pct - last_pct >= 0.5:
+                    last_pct = pct
+                    on_progress(pct)
+        proc.wait(timeout=timeout)
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, cmd)
+        if last_pct < 100:
+            on_progress(100.0)
+        return True
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        if proc.poll() is None:
+            proc.kill()
+        raise
+
+
+def remux_to_mp4(
+    source_path: str,
+    dest_path: str,
+    video: StreamInfo,
+    audio: Optional[StreamInfo],
+    on_progress: Optional[ProgressCallback] = None,
+) -> bool:
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     try:
         cmd = [
@@ -254,7 +314,11 @@ def remux_to_mp4(source_path: str, dest_path: str, video: StreamInfo, audio: Opt
             '-movflags', '+faststart',
             dest_path,
         ]
-        subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=True)
+        if on_progress:
+            on_progress(10.0)
+        _run_ffmpeg_with_progress(cmd, on_progress=on_progress, timeout=600)
+        if on_progress:
+            on_progress(100.0)
         return _validate_browser_mp4(dest_path)
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         logger.warning('remux failed %s: %s', source_path, e)
@@ -266,7 +330,14 @@ def remux_to_mp4(source_path: str, dest_path: str, video: StreamInfo, audio: Opt
         return False
 
 
-def transcode_to_mp4(source_path: str, dest_path: str, video: StreamInfo, audio: Optional[StreamInfo]) -> bool:
+def transcode_to_mp4(
+    source_path: str,
+    dest_path: str,
+    video: StreamInfo,
+    audio: Optional[StreamInfo],
+    on_progress: Optional[ProgressCallback] = None,
+    duration_sec: Optional[float] = None,
+) -> bool:
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     try:
         cmd = [
@@ -279,7 +350,7 @@ def transcode_to_mp4(source_path: str, dest_path: str, video: StreamInfo, audio:
             '-movflags', '+faststart',
             dest_path,
         ]
-        subprocess.run(cmd, capture_output=True, text=True, timeout=3600, check=True)
+        _run_ffmpeg_with_progress(cmd, duration_sec=duration_sec, on_progress=on_progress)
         return _validate_browser_mp4(dest_path)
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         logger.warning('transcode failed %s: %s', source_path, e)
@@ -291,7 +362,11 @@ def transcode_to_mp4(source_path: str, dest_path: str, video: StreamInfo, audio:
         return False
 
 
-def _prepare_browser_mp4(source_path: str, dest_path: str) -> bool:
+def _prepare_browser_mp4(
+    source_path: str,
+    dest_path: str,
+    on_progress: Optional[ProgressCallback] = None,
+) -> bool:
     info = probe_media_info(source_path)
     if not info:
         return False
@@ -301,15 +376,22 @@ def _prepare_browser_mp4(source_path: str, dest_path: str) -> bool:
         return False
     audio = pick_main_audio_stream(info.streams)
 
+    duration = info.duration if info.duration > 0 else None
     if _needs_transcode(info, video):
         logger.info('transcode for browser: %s (%s/%s)', source_path, video.codec_name, video.pix_fmt)
-        return transcode_to_mp4(source_path, dest_path, video, audio)
+        return transcode_to_mp4(
+            source_path, dest_path, video, audio,
+            on_progress=on_progress, duration_sec=duration,
+        )
 
     logger.info('remux for browser: %s (%s)', source_path, video.codec_name)
-    if remux_to_mp4(source_path, dest_path, video, audio):
+    if remux_to_mp4(source_path, dest_path, video, audio, on_progress=on_progress):
         return True
     logger.info('remux failed, fallback transcode: %s', source_path)
-    return transcode_to_mp4(source_path, dest_path, video, audio)
+    return transcode_to_mp4(
+        source_path, dest_path, video, audio,
+        on_progress=on_progress, duration_sec=duration,
+    )
 
 
 def browser_mp4_cache_path(source_path: str) -> str:
@@ -335,7 +417,10 @@ def resolve_browser_video_path_readonly(source_path: str) -> Tuple[Optional[str]
     return None, None
 
 
-def ensure_browser_mp4_cache(source_path: str) -> bool:
+def ensure_browser_mp4_cache(
+    source_path: str,
+    on_progress: Optional[ProgressCallback] = None,
+) -> bool:
     """后台任务：生成浏览器可播 mp4 缓存。"""
     if not os.path.isfile(source_path):
         return False
@@ -349,7 +434,7 @@ def ensure_browser_mp4_cache(source_path: str) -> bool:
             os.remove(cached)
     except OSError:
         pass
-    return _prepare_browser_mp4(source_path, cached)
+    return _prepare_browser_mp4(source_path, cached, on_progress=on_progress)
 
 
 def resolve_browser_video_path(source_path: str) -> Tuple[str, str]:
@@ -477,7 +562,11 @@ def build_audio_layout(file_path: str, assigned_by: str = 'auto') -> dict:
     }
 
 
-def prepare_video_only_mp4(source_path: str, dest_path: str) -> bool:
+def prepare_video_only_mp4(
+    source_path: str,
+    dest_path: str,
+    on_progress: Optional[ProgressCallback] = None,
+) -> bool:
     """生成无音轨浏览器可播 mp4。"""
     info = probe_media_info(source_path)
     if not info:
@@ -486,6 +575,7 @@ def prepare_video_only_mp4(source_path: str, dest_path: str) -> bool:
     if not video:
         return False
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    duration = info.duration if info.duration > 0 else None
     try:
         if _needs_transcode(info, video):
             cmd = [
@@ -501,7 +591,7 @@ def prepare_video_only_mp4(source_path: str, dest_path: str) -> bool:
                 '-map', f'0:{video.index}', '-an',
                 '-c:v', 'copy', '-tag:v', 'avc1', '-movflags', '+faststart', dest_path,
             ]
-        subprocess.run(cmd, capture_output=True, text=True, timeout=3600, check=True)
+        _run_ffmpeg_with_progress(cmd, duration_sec=duration, on_progress=on_progress)
         return _validate_browser_mp4(dest_path)
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         logger.warning('video-only extract failed %s: %s', source_path, e)
@@ -513,8 +603,18 @@ def prepare_video_only_mp4(source_path: str, dest_path: str) -> bool:
         return False
 
 
-def extract_audio_track(source_path: str, track_index: int, dest_path: str) -> bool:
+def extract_audio_track(
+    source_path: str,
+    track_index: int,
+    dest_path: str,
+    on_progress: Optional[ProgressCallback] = None,
+    duration_sec: Optional[float] = None,
+) -> bool:
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    if duration_sec is None:
+        info = probe_media_info(source_path)
+        if info and info.duration > 0:
+            duration_sec = info.duration
     try:
         cmd = [
             'ffmpeg', '-y', '-nostdin', '-i', source_path,
@@ -522,7 +622,7 @@ def extract_audio_track(source_path: str, track_index: int, dest_path: str) -> b
             '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
             dest_path,
         ]
-        subprocess.run(cmd, capture_output=True, text=True, timeout=3600, check=True)
+        _run_ffmpeg_with_progress(cmd, duration_sec=duration_sec, on_progress=on_progress)
         return os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         logger.warning('audio extract failed %s track %s: %s', source_path, track_index, e)

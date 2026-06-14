@@ -7,7 +7,7 @@ import os
 import traceback
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from tortoise.exceptions import DoesNotExist
 
@@ -44,6 +44,10 @@ class PrepareState(str, Enum):
 class _PrepareTask:
     song_id: int
     state: PrepareState = PrepareState.PENDING
+    phase: str = 'pending'
+    progress: float = 0.0
+    message: str = '排队等待中'
+    prepare_kind: str = 'unknown'
     error: Optional[str] = None
     asyncio_task: Optional[asyncio.Task] = field(default=None, repr=False)
 
@@ -79,6 +83,10 @@ class PrepareTaskManager:
                 'song_id': song_id,
                 'status': PrepareState.READY.value,
                 'ready': True,
+                'phase': 'done',
+                'progress': 100.0,
+                'message': '播放资源已就绪',
+                'prepare_kind': 'none',
                 'error': None,
             }
 
@@ -92,6 +100,10 @@ class PrepareTaskManager:
                 'song_id': song_id,
                 'status': PrepareState.NOT_NEEDED.value,
                 'ready': True,
+                'phase': 'done',
+                'progress': 100.0,
+                'message': '无需准备',
+                'prepare_kind': 'none',
                 'error': None,
             }
 
@@ -99,6 +111,10 @@ class PrepareTaskManager:
             'song_id': song_id,
             'status': PrepareState.IDLE.value,
             'ready': False,
+            'phase': 'idle',
+            'progress': 0.0,
+            'message': '尚未开始准备',
+            'prepare_kind': 'unknown',
             'error': None,
         }
 
@@ -138,53 +154,100 @@ class PrepareTaskManager:
     async def _run(self, task: _PrepareTask) -> None:
         task.state = PrepareState.RUNNING
         song_id = task.song_id
+        loop = asyncio.get_running_loop()
+        updater = self._make_progress_updater(task, loop)
         try:
             song = await self._songs.get(song_id)
             if has_full_override(song.display_name)[0]:
                 task.state = PrepareState.NOT_NEEDED
+                task.phase = 'done'
+                task.progress = 100.0
+                task.message = '无需准备'
                 return
 
             profile = resolve(song, prepare_embedded=False)
 
             if profile.playback_source == 'embedded':
+                task.prepare_kind = 'embedded'
+                task.message = 'MKV 双音轨拆轨中'
                 layout = parse_audio_layout(song.audio_layout)
                 if not layout:
                     layout = await probe_and_save_layout(song, assigned_by='auto')
                 if not layout or not has_dual_roles(layout):
                     task.state = PrepareState.FAILED
                     task.error = '无有效双音轨布局，请先检测播放能力'
+                    task.message = '准备失败'
                     return
+
+                def embedded_progress(progress: float, phase: str, message: str) -> None:
+                    updater(progress, phase, message)
+
                 paths = await asyncio.to_thread(
-                    ensure_embedded_cache, song, layout, True
+                    ensure_embedded_cache, song, layout, True, embedded_progress
                 )
                 await persist_playback_mode(song, resolve(song))
                 if paths.ready:
                     task.state = PrepareState.READY
+                    task.phase = 'done'
+                    task.progress = 100.0
+                    task.message = '缓存就绪'
                     await event_bus.publish_prepare_ready(song_id)
                 else:
                     task.state = PrepareState.FAILED
                     task.error = '内嵌缓存生成失败'
+                    task.message = '内嵌缓存生成失败'
                 return
 
             if profile.mode == 'plain' and profile.video_path:
+                task.prepare_kind = 'plain'
+                task.message = '浏览器转码中'
+                task.phase = 'transcode'
+
+                def plain_progress(pct: float) -> None:
+                    updater(pct, 'transcode', '浏览器转码中')
+
                 ok = await asyncio.to_thread(
-                    ensure_browser_mp4_cache, profile.video_path
+                    ensure_browser_mp4_cache, profile.video_path, plain_progress
                 )
                 if ok:
                     task.state = PrepareState.READY
+                    task.phase = 'done'
+                    task.progress = 100.0
+                    task.message = '转码完成'
                     await event_bus.publish_prepare_ready(song_id)
                 else:
                     task.state = PrepareState.FAILED
                     task.error = '浏览器转码缓存生成失败'
+                    task.message = '转码失败'
                 return
 
             task.state = PrepareState.NOT_NEEDED
+            task.phase = 'done'
+            task.progress = 100.0
+            task.message = '无需准备'
         except DoesNotExist:
             task.state = PrepareState.FAILED
             task.error = '歌曲不存在'
+            task.message = '准备失败'
         except Exception as exc:
             task.state = PrepareState.FAILED
             task.error = format_api_error(exc, "播放资源准备失败")
+            task.message = '准备失败'
+
+    @staticmethod
+    def _make_progress_updater(
+        task: _PrepareTask,
+        loop: asyncio.AbstractEventLoop,
+    ) -> Callable[[float, str, str], None]:
+        def update(progress: float, phase: str, message: str) -> None:
+            def apply() -> None:
+                task.progress = round(min(100.0, max(0.0, progress)), 1)
+                task.phase = phase
+                task.message = message
+
+            loop.call_soon_threadsafe(apply)
+
+        return update
 
     @staticmethod
     def _to_dict(task: _PrepareTask) -> dict:
@@ -193,6 +256,10 @@ class PrepareTaskManager:
             'song_id': task.song_id,
             'status': task.state.value,
             'ready': ready,
+            'phase': task.phase,
+            'progress': task.progress,
+            'message': task.message,
+            'prepare_kind': task.prepare_kind,
             'error': task.error,
         }
 
