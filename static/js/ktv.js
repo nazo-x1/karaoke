@@ -365,6 +365,49 @@ async function fetchPlaybackProfile(songId) {
     });
 }
 
+async function fetchPrepareStatus(songId) {
+    return new Promise((resolve, reject) => {
+        $.ajax({
+            type: "GET",
+            url: server + "/song/" + songId + "/prepare-status",
+            success: function (data) {
+                if (data.code === 0) resolve(data.data);
+                else reject(new Error(data.msg));
+            },
+            error: function () { reject(new Error("获取准备状态失败")); }
+        });
+    });
+}
+
+async function postEnsureReady(songId) {
+    return new Promise((resolve, reject) => {
+        $.ajax({
+            type: "POST",
+            url: server + "/song/" + songId + "/ensure-ready",
+            success: function (data) {
+                if (data.code === 0 && data.data) resolve(data.data);
+                else reject(new Error(data.msg || "启动准备任务失败"));
+            },
+            error: function () { reject(new Error("启动准备任务失败")); }
+        });
+    });
+}
+
+async function waitUntilPlaybackReady(songId) {
+    let prep = await postEnsureReady(songId);
+    if (prep.ready) return prep;
+    const deadline = Date.now() + 3600000;
+    while (Date.now() < deadline) {
+        if (prep.ready) return prep;
+        if (prep.status === 'failed') {
+            throw new Error(prep.error || '播放资源准备失败');
+        }
+        await new Promise(r => setTimeout(r, 1500));
+        prep = await fetchPrepareStatus(songId);
+    }
+    throw new Error('等待播放资源超时');
+}
+
 loadSing = async (flag = false) => {
     getSingList(false);
     if (singsList.length < 1) { return; }
@@ -383,6 +426,22 @@ loadSing = async (flag = false) => {
 
     if (!profile.can_queue) {
         $.Toast("当前歌曲不可播放", "error");
+        return;
+    }
+
+    if (!profile.ready_to_stream) {
+        $.Toast("正在准备播放资源，请稍候…", "success");
+        try {
+            await waitUntilPlaybackReady(song.id);
+            profile = await fetchPlaybackProfile(song.id);
+        } catch (err) {
+            $.Toast(err.message || "播放资源未就绪", "error");
+            return;
+        }
+    }
+
+    if (!profile.ready_to_stream) {
+        $.Toast("播放资源未就绪", "error");
         return;
     }
 
@@ -632,6 +691,11 @@ window.onload = function() {
             case 8:
                 getSingList(false);
                 showTips();
+                break;
+            case 9:
+                if (singsList.length > 0 && String(singsList[0].id) === String(message.data)) {
+                    loadSing(videoReady && !video.paused);
+                }
                 break;
         }
     };

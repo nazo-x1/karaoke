@@ -312,10 +312,14 @@ def _prepare_browser_mp4(source_path: str, dest_path: str) -> bool:
     return transcode_to_mp4(source_path, dest_path, video, audio)
 
 
-def resolve_browser_video_path(source_path: str) -> Tuple[str, str]:
-    """返回 (实际读取路径, Content-Type)。"""
+def browser_mp4_cache_path(source_path: str) -> str:
+    return _cache_path(source_path)
+
+
+def resolve_browser_video_path_readonly(source_path: str) -> Tuple[Optional[str], Optional[str]]:
+    """仅返回可直接播放或已有转码缓存的路径，不在 stream 中触发 ffmpeg。"""
     if not os.path.isfile(source_path):
-        return source_path, video_mime_for_ext(file_ext(source_path))
+        return None, None
 
     ext = file_ext(source_path)
     if can_play_directly(source_path):
@@ -326,14 +330,42 @@ def resolve_browser_video_path(source_path: str) -> Tuple[str, str]:
         if os.path.isfile(cached) and os.path.getmtime(cached) >= os.path.getmtime(source_path):
             if _validate_browser_mp4(cached):
                 return cached, 'video/mp4'
+    except OSError:
+        pass
+    return None, None
+
+
+def ensure_browser_mp4_cache(source_path: str) -> bool:
+    """后台任务：生成浏览器可播 mp4 缓存。"""
+    if not os.path.isfile(source_path):
+        return False
+    if can_play_directly(source_path):
+        return True
+    cached = _cache_path(source_path)
+    try:
+        if os.path.isfile(cached) and os.path.getmtime(cached) >= os.path.getmtime(source_path):
+            if _validate_browser_mp4(cached):
+                return True
             os.remove(cached)
     except OSError:
         pass
+    return _prepare_browser_mp4(source_path, cached)
 
+
+def resolve_browser_video_path(source_path: str) -> Tuple[str, str]:
+    """返回 (实际读取路径, Content-Type)。同步路径，可能触发 ffmpeg。"""
+    if not os.path.isfile(source_path):
+        return source_path, video_mime_for_ext(file_ext(source_path))
+
+    path, mime = resolve_browser_video_path_readonly(source_path)
+    if path:
+        return path, mime
+
+    cached = _cache_path(source_path)
     if _prepare_browser_mp4(source_path, cached):
         return cached, 'video/mp4'
 
-    return source_path, video_mime_for_ext(ext)
+    return source_path, video_mime_for_ext(file_ext(source_path))
 
 
 @dataclass

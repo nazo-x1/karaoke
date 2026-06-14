@@ -121,14 +121,24 @@ async def song_playback(song_id: int):
     return await views.get_playback_profile(song_id)
 
 
+@router.get("/{song_id}/prepare-status", summary="播放资源准备状态")
+async def prepare_status(song_id: int):
+    return await views.playback_prepare_status(song_id)
+
+
+@router.post("/{song_id}/ensure-ready", summary="确保播放资源就绪（启动后台任务）")
+async def ensure_ready(song_id: int):
+    return await views.ensure_playback_ready(song_id)
+
+
 @router.post("/{song_id}/detect-playback", summary="检测播放能力")
 async def detect_playback(song_id: int):
     return await views.detect_playback(song_id)
 
 
 @router.post("/{song_id}/prepare-embedded", summary="预生成内嵌缓存")
-async def prepare_embedded(song_id: int):
-    return await views.prepare_embedded(song_id)
+async def prepare_embedded(song_id: int, wait: bool = False):
+    return await views.prepare_embedded(song_id, wait=wait)
 
 
 @router.get("/{song_id}", summary="歌曲详情")

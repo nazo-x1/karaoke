@@ -120,16 +120,20 @@ document.getElementById("detect-playback-btn").addEventListener("click", () => {
 });
 
 document.getElementById("prepare-btn").addEventListener("click", () => {
-    $.Toast("正在生成缓存，请稍候…", "success");
+    $.Toast("正在后台生成缓存，请稍候…", "success");
     $.ajax({
         type: "POST",
-        url: server + "/song/" + songId + "/prepare-embedded",
+        url: server + "/song/" + songId + "/prepare-embedded?wait=1",
         success: function (data) {
             if (data.code === 0) {
                 $.Toast(data.msg, "success");
             } else {
                 $.Toast(data.msg, "error");
             }
+            loadSong();
+        },
+        error: function () {
+            $.Toast("请求失败", "error");
             loadSong();
         }
     });

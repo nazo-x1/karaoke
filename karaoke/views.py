@@ -10,11 +10,17 @@ from urllib.parse import quote, unquote
 
 from tortoise.exceptions import DoesNotExist
 from fastapi import Request
+from fastapi.responses import JSONResponse
 
 from karaoke.media import file_ext, probe_video_playable
 from karaoke.models import Song, History
 from karaoke.audio_layout import layout_summary, merge_manual_roles, parse_audio_layout, serialize_audio_layout
-from karaoke.embedded import probe_and_save_layout, ensure_embedded_cache
+from karaoke.embedded import probe_and_save_layout
+from karaoke.prepare_tasks import (
+    get_prepare_status,
+    schedule_playback_prepare,
+    wait_playback_ready,
+)
 from karaoke.playback import (
     refresh_playback_mode,
     resolve,
@@ -91,20 +97,29 @@ def _playback_detail(song: Song, profile) -> dict:
     }
 
 
-def _playback_api(song: Song, profile) -> dict:
+def _playback_api(song: Song, profile, prepare: Optional[dict] = None) -> dict:
+    prep = prepare or {}
+    ready = prep.get('ready')
+    if ready is None:
+        if profile.playback_source == 'embedded':
+            ready = profile.embedded_cache_ready
+        else:
+            ready = profile.can_queue
     return {
         'id': song.id,
         'display_name': song.display_name,
         'mode': profile.mode,
         'playback_source': profile.playback_source,
         'can_queue': profile.can_queue,
+        'ready_to_stream': ready,
+        'prepare': prep,
         'video_mime': profile.video_mime,
         'video_ext': profile.video_ext,
         'embedded_cache_ready': profile.embedded_cache_ready,
         'streams': {
-            'video': profile.video_path is not None,
-            'vocals': profile.vocals_path is not None,
-            'accompaniment': profile.accompaniment_path is not None,
+            'video': profile.video_path is not None and ready,
+            'vocals': profile.vocals_path is not None and ready,
+            'accompaniment': profile.accompaniment_path is not None and ready,
         },
     }
 
@@ -316,7 +331,50 @@ async def get_playback_profile(song_id: int) -> Result:
     try:
         song = await Song.get(id=song_id)
         profile = await refresh_playback_mode(song)
-        result.data = _playback_api(song, profile)
+        prep = await get_prepare_status(song_id)
+        result.data = _playback_api(song, profile, prep)
+    except DoesNotExist:
+        result.code = 1
+        result.msg = "歌曲不存在"
+    except Exception:
+        logger.error(traceback.format_exc())
+        result.code = 1
+        result.msg = "系统错误"
+    return result
+
+
+async def ensure_playback_ready(song_id: int) -> Result:
+    """客户端播放前调用：必要时启动后台准备并返回当前状态。"""
+    result = Result()
+    try:
+        song = await Song.get(id=song_id)
+        await refresh_playback_mode(song)
+        prep = await schedule_playback_prepare(song_id)
+        result.data = prep
+        if prep.get('ready'):
+            result.msg = "播放资源已就绪"
+        elif prep.get('status') in ('pending', 'running'):
+            result.msg = "正在后台准备播放资源"
+        elif prep.get('status') == 'failed':
+            result.code = 1
+            result.msg = prep.get('error') or "播放资源准备失败"
+        else:
+            result.msg = "等待准备播放资源"
+    except DoesNotExist:
+        result.code = 1
+        result.msg = "歌曲不存在"
+    except Exception:
+        logger.error(traceback.format_exc())
+        result.code = 1
+        result.msg = "系统错误"
+    return result
+
+
+async def playback_prepare_status(song_id: int) -> Result:
+    result = Result()
+    try:
+        await Song.get(id=song_id)
+        result.data = await get_prepare_status(song_id)
     except DoesNotExist:
         result.code = 1
         result.msg = "歌曲不存在"
@@ -364,6 +422,9 @@ async def detect_playback(song_id: int) -> Result:
             await probe_and_save_layout(song, assigned_by='auto')
         profile = await refresh_playback_mode(song)
         result.data = _playback_detail(song, profile)
+        if profile.playback_source == 'embedded' and not profile.embedded_cache_ready:
+            prep = await schedule_playback_prepare(song_id)
+            result.data = {**result.data, 'prepare': prep}
         result.msg = "播放能力检测完成"
     except DoesNotExist:
         result.code = 1
@@ -375,7 +436,7 @@ async def detect_playback(song_id: int) -> Result:
     return result
 
 
-async def prepare_embedded(song_id: int) -> Result:
+async def prepare_embedded(song_id: int, wait: bool = False) -> Result:
     result = Result()
     try:
         song = await Song.get(id=song_id)
@@ -384,24 +445,22 @@ async def prepare_embedded(song_id: int) -> Result:
             result.data = _playback_detail(song, profile)
             result.msg = "已有 __override__ 三件套，无需预生成内嵌缓存"
             return result
-        layout = parse_audio_layout(song.audio_layout)
-        if not layout:
-            await probe_and_save_layout(song)
-            layout = parse_audio_layout(song.audio_layout)
-        if not layout:
-            result.code = 1
-            result.msg = "无法探测音轨布局"
-            return result
-        paths = await asyncio.to_thread(ensure_embedded_cache, song, layout, True)
+        prep = await schedule_playback_prepare(song_id)
+        if wait:
+            prep = await wait_playback_ready(song_id)
         profile = await refresh_playback_mode(song)
         result.data = {
             **_playback_detail(song, profile),
-            'cache_ready': paths.ready,
-            'cache_dir': paths.cache_dir,
+            'prepare': prep,
+            'cache_ready': prep.get('ready', False),
         }
-        result.msg = "缓存生成完成" if paths.ready else "缓存生成失败"
-        if not paths.ready:
+        if prep.get('ready'):
+            result.msg = "缓存已就绪"
+        elif prep.get('status') in ('pending', 'running'):
+            result.msg = "正在后台生成缓存"
+        else:
             result.code = 1
+            result.msg = prep.get('error') or "缓存生成失败"
     except DoesNotExist:
         result.code = 1
         result.msg = "歌曲不存在"
@@ -472,9 +531,20 @@ async def sing_song(song_id: int) -> Result:
         except DoesNotExist:
             await History.create(id=song.id, name=song.display_name, is_sing=0, is_top=0)
 
+        prep = None
+        if profile.playback_source == 'embedded' and not profile.embedded_cache_ready:
+            prep = await schedule_playback_prepare(song.id)
+        elif profile.mode == 'plain' and profile.video_path:
+            from karaoke.media import can_play_directly
+            if not can_play_directly(profile.video_path):
+                prep = await schedule_playback_prepare(song.id)
+
         await broadcast_data({"code": 8})
         result.msg = f"{song.display_name} 点歌成功"
-        result.data = {'playback_mode': profile.mode}
+        result.data = {
+            'playback_mode': profile.mode,
+            'prepare': prep,
+        }
     except DoesNotExist:
         result.code = 1
         result.msg = "歌曲不存在"
@@ -610,9 +680,20 @@ async def stream_song(request: Request, song_id: int, kind: str):
         if kind not in ('video', 'vocals', 'accompaniment'):
             return Result(code=1, msg="无效的流类型")
         song = await Song.get(id=song_id)
+        profile = resolve(song, prepare_embedded=False)
         file_path, media_type = await asyncio.to_thread(stream_media_for_kind, song, kind)
         if not file_path or not os.path.isfile(file_path):
-            return Result(code=1, msg="文件不存在")
+            if profile.playback_source == 'embedded' and not profile.embedded_cache_ready:
+                prep = await get_prepare_status(song_id)
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        'code': 1,
+                        'msg': '内嵌缓存未就绪，请等待后台生成完成',
+                        'data': prep,
+                    },
+                )
+            return Result(code=1, msg="播放文件不存在或未就绪")
 
         file_size = os.path.getsize(file_path)
         if not media_type:

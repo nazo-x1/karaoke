@@ -278,7 +278,12 @@ function sing_song(file_id) {
         success: function (data) {
             if (data.code === 0) {
                 get_added_songs();
-                $.Toast(data.msg, "success");
+                let msg = data.msg;
+                if (data.data && data.data.prepare && !data.data.prepare.ready
+                    && ['pending', 'running', 'idle'].includes(data.data.prepare.status)) {
+                    msg += "（正在后台准备播放资源）";
+                }
+                $.Toast(msg, "success");
             } else {
                 $.Toast(data.msg, "error");
             }

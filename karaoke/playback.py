@@ -7,7 +7,11 @@ from typing import Optional
 
 from karaoke.audio_layout import has_dual_roles, parse_audio_layout
 from karaoke.embedded import ensure_embedded_cache
-from karaoke.media import resolve_browser_video_path, video_mime_for_ext, file_ext
+from karaoke.media import (
+    resolve_browser_video_path_readonly,
+    video_mime_for_ext,
+    file_ext,
+)
 from karaoke.models import Song
 from settings import OVERRIDE_PATH
 
@@ -136,8 +140,11 @@ async def refresh_playback_mode(song: Song) -> PlaybackProfile:
 
 
 def stream_media_for_kind(song: Song, kind: str) -> tuple:
-    """返回 (文件路径, Content-Type)。"""
-    profile = resolve(song, prepare_embedded=True)
+    """返回 (文件路径, Content-Type)。仅读已有缓存，不在 stream 中生成。"""
+    profile = resolve(song, prepare_embedded=False)
+    if profile.playback_source == 'embedded' and not profile.embedded_cache_ready:
+        return None, None
+
     path = {
         'video': profile.video_path,
         'vocals': profile.vocals_path,
@@ -150,6 +157,9 @@ def stream_media_for_kind(song: Song, kind: str) -> tuple:
     if kind == 'video':
         if profile.playback_source == 'embedded':
             return path, 'video/mp4'
-        return resolve_browser_video_path(path)
+        resolved, mime = resolve_browser_video_path_readonly(path)
+        if not resolved:
+            return None, None
+        return resolved, mime
 
     return path, video_mime_for_ext(file_ext(path))
