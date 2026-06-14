@@ -70,6 +70,8 @@ CONTENT_TYPE = {
     'webm': 'video/webm',
     'm4v': 'video/x-m4v',
     'mp3': 'audio/mpeg',
+    'm4a': 'audio/mp4',
+    'aac': 'audio/aac',
     'wav': 'audio/wav',
 }
 

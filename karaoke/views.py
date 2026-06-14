@@ -14,11 +14,19 @@ from fastapi import Request
 
 from karaoke.media import file_ext, probe_video_playable
 from karaoke.models import Song, History, SongList, HistoryList
+from karaoke.audio_layout import (
+    layout_summary,
+    merge_manual_roles,
+    parse_audio_layout,
+    serialize_audio_layout,
+)
+from karaoke.embedded import probe_and_save_layout, ensure_embedded_cache
 from karaoke.playback import (
     refresh_playback_mode,
     resolve,
     stream_media_for_kind,
     override_triplet_paths,
+    has_full_override,
 )
 from karaoke.results import Result
 from karaoke.responses import StreamResponse
@@ -92,6 +100,7 @@ def _song_to_list_item(song: Song, profile=None) -> dict:
         display_name=song.display_name,
         source_origin=song.source_origin,
         playback_mode=profile.mode if profile.mode != 'not_ready' else song.playback_mode,
+        playback_source=profile.playback_source,
         can_queue=profile.can_queue,
         is_playable=song.is_playable,
         source_path=song.source_path,
@@ -100,6 +109,22 @@ def _song_to_list_item(song: Song, profile=None) -> dict:
     ).dict()
 
 
+def _playback_detail(song: Song, profile) -> dict:
+    triplet = override_triplet_paths(song.display_name)
+    layout = parse_audio_layout(song.audio_layout)
+    return {
+        'playback_mode': profile.mode if profile.mode != 'not_ready' else song.playback_mode,
+        'playback_source': profile.playback_source,
+        'can_queue': profile.can_queue,
+        'embedded_cache_ready': profile.embedded_cache_ready,
+        'audio_layout': layout_summary(layout),
+        'override_files': {
+            'video': os.path.isfile(triplet['video']),
+            'vocals': os.path.isfile(triplet['vocals']),
+            'accompaniment': os.path.isfile(triplet['accompaniment']),
+        },
+        'override_complete': has_full_override(song.display_name)[0],
+    }
 
 async def _build_history_list(songs: List[History]) -> List[dict]:
     ids = [s.id for s in songs]
@@ -181,6 +206,7 @@ async def upload_file(query: Request) -> Result:
             existing.source_origin = 'upload'
             await existing.save()
             song = existing
+            await probe_and_save_layout(song)
         elif name_conflict and duplicate_policy == 'overwrite' and name_conflict.source_path != dest_path:
             if os.path.isfile(name_conflict.source_path) and name_conflict.source_origin == 'upload':
                 os.remove(name_conflict.source_path)
@@ -191,6 +217,7 @@ async def upload_file(query: Request) -> Result:
             name_conflict.source_rel = None
             await name_conflict.save()
             song = name_conflict
+            await probe_and_save_layout(song)
         else:
             song = await Song.create(
                 display_name=display_name,
@@ -201,6 +228,7 @@ async def upload_file(query: Request) -> Result:
                 playback_mode='plain',
                 is_playable=is_playable,
             )
+            await probe_and_save_layout(song)
 
         await refresh_playback_mode(song)
         result.msg = f"{filename} 上传成功"
@@ -243,21 +271,14 @@ async def get_song_detail(song_id: int) -> Result:
     try:
         song = await Song.get(id=song_id)
         profile = await refresh_playback_mode(song)
-        triplet = override_triplet_paths(song.display_name)
         result.data = {
             'id': song.id,
             'display_name': song.display_name,
             'source_path': song.source_path,
             'source_origin': song.source_origin,
             'source_rel': song.source_rel,
-            'playback_mode': profile.mode if profile.mode != 'not_ready' else song.playback_mode,
-            'can_queue': profile.can_queue,
             'is_playable': song.is_playable,
-            'override_files': {
-                'video': os.path.isfile(triplet['video']),
-                'vocals': os.path.isfile(triplet['vocals']),
-                'accompaniment': os.path.isfile(triplet['accompaniment']),
-            },
+            **_playback_detail(song, profile),
         }
     except DoesNotExist:
         result.code = 1
@@ -278,9 +299,11 @@ async def get_playback_profile(song_id: int) -> Result:
             'id': song.id,
             'display_name': song.display_name,
             'mode': profile.mode,
+            'playback_source': profile.playback_source,
             'can_queue': profile.can_queue,
             'video_mime': profile.video_mime,
             'video_ext': profile.video_ext,
+            'embedded_cache_ready': profile.embedded_cache_ready,
             'streams': {
                 'video': profile.video_path is not None,
                 'vocals': profile.vocals_path is not None,
@@ -302,6 +325,7 @@ async def patch_song(song_id: int, body: dict) -> Result:
     try:
         song = await Song.get(id=song_id)
         display_name = body.get('display_name')
+        audio_tracks = body.get('audio_tracks')
         if display_name:
             song.display_name = display_name.strip()[:256]
             await song.save(update_fields=['display_name', 'update_time'])
@@ -309,6 +333,10 @@ async def patch_song(song_id: int, body: dict) -> Result:
             for h in histories:
                 h.name = song.display_name
                 await h.save(update_fields=['name', 'update_time'])
+        if audio_tracks is not None:
+            layout = merge_manual_roles(parse_audio_layout(song.audio_layout), audio_tracks)
+            song.audio_layout = serialize_audio_layout(layout)
+            await song.save(update_fields=['audio_layout', 'update_time'])
         profile = await refresh_playback_mode(song)
         result.data = _song_to_list_item(song, profile)
         result.msg = "更新成功"
@@ -327,17 +355,64 @@ async def detect_override(song_id: int) -> Result:
     try:
         song = await Song.get(id=song_id)
         profile = await refresh_playback_mode(song)
-        triplet = override_triplet_paths(song.display_name)
-        result.data = {
-            'playback_mode': profile.mode if profile.mode != 'not_ready' else song.playback_mode,
-            'can_queue': profile.can_queue,
-            'override_files': {
-                'video': os.path.isfile(triplet['video']),
-                'vocals': os.path.isfile(triplet['vocals']),
-                'accompaniment': os.path.isfile(triplet['accompaniment']),
-            },
-        }
+        result.data = _playback_detail(song, profile)
         result.msg = "检测完成"
+    except DoesNotExist:
+        result.code = 1
+        result.msg = "歌曲不存在"
+    except Exception:
+        logger.error(traceback.format_exc())
+        result.code = 1
+        result.msg = "系统错误"
+    return result
+
+
+async def detect_playback(song_id: int) -> Result:
+    result = Result()
+    try:
+        song = await Song.get(id=song_id)
+        if not has_full_override(song.display_name)[0]:
+            await probe_and_save_layout(song, assigned_by='auto')
+        profile = await refresh_playback_mode(song)
+        result.data = _playback_detail(song, profile)
+        result.msg = "播放能力检测完成"
+    except DoesNotExist:
+        result.code = 1
+        result.msg = "歌曲不存在"
+    except Exception:
+        logger.error(traceback.format_exc())
+        result.code = 1
+        result.msg = "系统错误"
+    return result
+
+
+async def prepare_embedded(song_id: int) -> Result:
+    result = Result()
+    try:
+        song = await Song.get(id=song_id)
+        if has_full_override(song.display_name)[0]:
+            result.msg = "已有 __override__ 三件套，无需预生成内嵌缓存"
+            profile = resolve(song)
+            result.data = _playback_detail(song, profile)
+            return result
+        layout = parse_audio_layout(song.audio_layout)
+        if not layout:
+            await probe_and_save_layout(song)
+            layout = parse_audio_layout(song.audio_layout)
+        if not layout:
+            result.code = 1
+            result.msg = "无法探测音轨布局"
+            return result
+        paths = await asyncio.to_thread(ensure_embedded_cache, song, layout, True)
+        profile = await refresh_playback_mode(song)
+        result.data = {
+            **_playback_detail(song, profile),
+            'cache_ready': paths.ready,
+            'cache_dir': paths.cache_dir,
+        }
+        result.msg = "缓存生成完成" if paths.ready else "缓存生成失败"
+        if not paths.ready:
+            result.code = 1
     except DoesNotExist:
         result.code = 1
         result.msg = "歌曲不存在"
@@ -567,10 +642,7 @@ async def stream_song(request: Request, song_id: int, kind: str):
         if kind not in ('video', 'vocals', 'accompaniment'):
             return Result(code=1, msg="无效的流类型")
         song = await Song.get(id=song_id)
-        if kind == 'video':
-            file_path, media_type = await asyncio.to_thread(stream_media_for_kind, song, kind)
-        else:
-            file_path, media_type = stream_media_for_kind(song, kind)
+        file_path, media_type = await asyncio.to_thread(stream_media_for_kind, song, kind)
         if not file_path or not os.path.isfile(file_path):
             return Result(code=1, msg="文件不存在")
 

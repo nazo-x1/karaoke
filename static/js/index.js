@@ -5,8 +5,14 @@ function originLabel(v) {
     return v === 'upload' ? '上传' : '扫描';
 }
 
-function modeLabel(v) {
-    return v === 'enhanced' ? '增强' : '仅播放';
+function modeLabel(item) {
+    if (item.playback_mode === 'enhanced') {
+        const src = item.playback_source || '';
+        if (src === 'override') return '增强(覆写)';
+        if (src === 'embedded') return '增强(内嵌)';
+        return '增强';
+    }
+    return '仅播放';
 }
 
 function statusLabel(item) {

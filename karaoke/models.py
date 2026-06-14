@@ -17,6 +17,7 @@ class Song(Model):
     playback_mode = fields.CharField(max_length=16, default='plain', description='plain | enhanced')
     is_playable = fields.BooleanField(default=False, description='ffprobe 验证是否可播放')
     scan_root = fields.CharField(max_length=1024, null=True, description='最近一次扫描根')
+    audio_layout = fields.TextField(null=True, description='内嵌音轨布局 JSON')
     create_time = fields.DatetimeField(auto_now_add=True)
     update_time = fields.DatetimeField(auto_now=True)
 
@@ -43,6 +44,7 @@ class SongList(BaseModel):
     display_name: str
     source_origin: str
     playback_mode: str
+    playback_source: str = 'plain'
     can_queue: bool
     is_playable: bool
     source_path: str

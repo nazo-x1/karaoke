@@ -5,7 +5,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
-from karaoke.media import file_ext, probe_video_playable
+from karaoke.media import file_ext, probe_video_playable, build_audio_layout
+from karaoke.audio_layout import serialize_audio_layout
 from karaoke.models import Song
 from settings import (
     DEFAULT_DUPLICATE_POLICY,
@@ -118,6 +119,7 @@ async def scan_root(
                     song.is_playable = is_playable
                     song.scan_root = root
                     song.source_rel = source_rel or None
+                    song.audio_layout = serialize_audio_layout(build_audio_layout(abs_path))
                     to_update.append(song)
                     if dry_run:
                         stats.preview.append({'path': abs_path, 'action': 'update'})
@@ -145,6 +147,9 @@ async def scan_root(
                         existing_same_name.is_playable = is_playable
                         existing_same_name.scan_root = root
                         existing_same_name.source_origin = 'scan'
+                        existing_same_name.audio_layout = serialize_audio_layout(
+                            build_audio_layout(abs_path)
+                        )
                         to_update.append(existing_same_name)
                         existing_by_path[abs_path] = existing_same_name
                     stats.added += 1
@@ -174,6 +179,7 @@ async def scan_root(
                 playback_mode='plain',
                 is_playable=is_playable,
                 scan_root=root,
+                audio_layout=serialize_audio_layout(build_audio_layout(abs_path)),
             )
             to_create.append(song)
             existing_by_path[abs_path] = song

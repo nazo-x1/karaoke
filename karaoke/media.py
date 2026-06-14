@@ -342,3 +342,172 @@ def predict_stream_mime(source_path: str) -> str:
     if can_play_directly(source_path):
         return video_mime_for_ext(file_ext(source_path))
     return 'video/mp4'
+
+
+# --- 内嵌音轨探测 ---
+
+@dataclass
+class AudioTrackInfo:
+    index: int
+    codec: str
+    channels: int
+    title: str
+    language: str
+    role: str = 'unknown'
+
+
+_VOCALS_KEYWORDS = (
+    '原唱', 'vocal', 'vocals', '人声', '演唱', '歌手',
+)
+_ACCOMP_KEYWORDS = (
+    '伴奏', 'instrumental', 'karaoke', 'off vocal', 'off-vocal', 'accompaniment',
+    'bgm', 'music', 'カラオケ',
+)
+_FULL_KEYWORDS = (
+    'complete', 'full', 'mix', '混音', '完整',
+)
+
+
+def _match_role(title: str, language: str) -> str:
+    text = f"{title} {language}".lower()
+    if any(k in text for k in _ACCOMP_KEYWORDS):
+        return 'accompaniment'
+    if any(k in text for k in _VOCALS_KEYWORDS):
+        return 'vocals'
+    if any(k in text for k in _FULL_KEYWORDS):
+        return 'full'
+    return 'unknown'
+
+
+def probe_audio_tracks(file_path: str) -> List[AudioTrackInfo]:
+    if not os.path.isfile(file_path):
+        return []
+    data = _run_ffprobe([
+        '-select_streams', 'a',
+        '-show_entries', 'stream=index,codec_name,channels',
+        '-show_entries', 'stream_tags=title,language',
+        '-of', 'json',
+        file_path,
+    ])
+    if not data:
+        return []
+    tracks = []
+    for raw in data.get('streams') or []:
+        tags = raw.get('tags') or {}
+        title = (tags.get('title') or '').strip()
+        language = (tags.get('language') or '').strip()
+        tracks.append(AudioTrackInfo(
+            index=int(raw.get('index', 0)),
+            codec=(raw.get('codec_name') or '').lower(),
+            channels=int(raw.get('channels') or 0),
+            title=title,
+            language=language,
+            role=_match_role(title, language),
+        ))
+    return tracks
+
+
+def guess_track_roles(tracks: List[AudioTrackInfo]) -> List[AudioTrackInfo]:
+    if not tracks:
+        return tracks
+    result = [AudioTrackInfo(**{**t.__dict__}) for t in tracks]
+    roles = [t.role for t in result]
+    if 'vocals' in roles and 'accompaniment' in roles:
+        return result
+    unknown_indices = [i for i, t in enumerate(result) if t.role == 'unknown']
+    if len(result) == 2 and len(unknown_indices) == 2:
+        result[0].role = 'vocals'
+        result[1].role = 'accompaniment'
+    elif len(result) == 1:
+        result[0].role = 'full'
+    return result
+
+
+def build_audio_layout(file_path: str, assigned_by: str = 'auto') -> dict:
+    streams = probe_streams(file_path)
+    video = pick_main_video_stream(streams)
+    tracks = guess_track_roles(probe_audio_tracks(file_path))
+    track_dicts = [
+        {
+            'index': t.index,
+            'title': t.title,
+            'language': t.language,
+            'codec': t.codec,
+            'channels': t.channels,
+            'role': t.role,
+        }
+        for t in tracks
+    ]
+    roles = {t['role'] for t in track_dicts if t['role'] != 'ignore'}
+    if 'vocals' in roles and 'accompaniment' in roles:
+        layout_type = 'dual'
+    elif len(tracks) == 1:
+        if track_dicts and track_dicts[0]['role'] == 'unknown':
+            track_dicts[0]['role'] = 'full'
+        layout_type = 'single'
+    else:
+        layout_type = 'unknown'
+    return {
+        'tracks': track_dicts,
+        'video_stream_index': video.index if video else None,
+        'assigned_by': assigned_by,
+        'layout': layout_type,
+    }
+
+
+def prepare_video_only_mp4(source_path: str, dest_path: str) -> bool:
+    """生成无音轨浏览器可播 mp4。"""
+    info = probe_media_info(source_path)
+    if not info:
+        return False
+    video = pick_main_video_stream(info.streams)
+    if not video:
+        return False
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    try:
+        if _needs_transcode(info, video):
+            cmd = [
+                'ffmpeg', '-y', '-nostdin', '-i', source_path,
+                '-map', f'0:{video.index}', '-an',
+                '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+                '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-level', '4.1',
+                '-tag:v', 'avc1', '-movflags', '+faststart', dest_path,
+            ]
+        else:
+            cmd = [
+                'ffmpeg', '-y', '-nostdin', '-i', source_path,
+                '-map', f'0:{video.index}', '-an',
+                '-c:v', 'copy', '-tag:v', 'avc1', '-movflags', '+faststart', dest_path,
+            ]
+        subprocess.run(cmd, capture_output=True, text=True, timeout=3600, check=True)
+        return _validate_browser_mp4(dest_path)
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        logger.warning('video-only extract failed %s: %s', source_path, e)
+        if os.path.isfile(dest_path):
+            try:
+                os.remove(dest_path)
+            except OSError:
+                pass
+        return False
+
+
+def extract_audio_track(source_path: str, track_index: int, dest_path: str) -> bool:
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    try:
+        cmd = [
+            'ffmpeg', '-y', '-nostdin', '-i', source_path,
+            '-map', f'0:{track_index}', '-vn',
+            '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+            dest_path,
+        ]
+        subprocess.run(cmd, capture_output=True, text=True, timeout=3600, check=True)
+        return os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        logger.warning('audio extract failed %s track %s: %s', source_path, track_index, e)
+        if os.path.isfile(dest_path):
+            try:
+                os.remove(dest_path)
+            except OSError:
+                pass
+        return False
+

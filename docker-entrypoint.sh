@@ -16,8 +16,11 @@ import sys
 
 conn = sqlite3.connect("/KTV/sqlite3.db")
 tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+cols = []
+if "song" in tables:
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(song)")]
 conn.close()
-if "files" in tables or "song" not in tables:
+if "files" in tables or "song" not in tables or "audio_layout" not in cols:
     sys.exit(1)
 sys.exit(0)
 PY

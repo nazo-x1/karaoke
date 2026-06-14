@@ -124,6 +124,16 @@ async def detect_override(song_id: int):
     return await views.detect_override(song_id)
 
 
+@router.post("/{song_id}/detect-playback", summary="检测播放能力")
+async def detect_playback(song_id: int):
+    return await views.detect_playback(song_id)
+
+
+@router.post("/{song_id}/prepare-embedded", summary="预生成内嵌缓存")
+async def prepare_embedded(song_id: int):
+    return await views.prepare_embedded(song_id)
+
+
 @router.get("/{song_id}", summary="歌曲详情")
 async def song_detail(song_id: int):
     return await views.get_song_detail(song_id)
