@@ -21,9 +21,33 @@ def get_config(key):
     return cfg.get('default', key, fallback=None)
 
 
+def get_config_bool(key, default=False):
+    val = get_config(key)
+    if val is None:
+        return default
+    return str(val).lower() in ('1', 'true', 'yes', 'on')
+
+
 FILE_PATH = get_config("path")
+if not FILE_PATH:
+    raise FileNotFoundError("config path is required")
 if not os.path.exists(FILE_PATH):
     raise FileNotFoundError(FILE_PATH)
+
+KEEP_PATH = get_config("keep_path") or os.path.join(FILE_PATH, "__keep__")
+OVERRIDE_PATH = get_config("override_path") or os.path.join(FILE_PATH, "__override__")
+KEEP_DIR_NAME = get_config("keep_dir_name") or "__keep__"
+OVERRIDE_DIR_NAME = get_config("override_dir_name") or "__override__"
+SCAN_VIDEO_EXTS = [
+    ext.strip().lower().lstrip('.')
+    for ext in (get_config("scan_video_exts") or "mp4").split(',')
+    if ext.strip()
+]
+FFPROBE_ON_IMPORT = get_config_bool("ffprobe_on_import", True)
+DEFAULT_DUPLICATE_POLICY = get_config("default_duplicate_policy") or "skip"
+
+os.makedirs(KEEP_PATH, exist_ok=True)
+os.makedirs(OVERRIDE_PATH, exist_ok=True)
 
 TORTOISE_ORM = {
     "connections": {"default": f"sqlite://{FILE_PATH}/sqlite3.db"},
@@ -36,10 +60,16 @@ TORTOISE_ORM = {
     "timezone": "Asia/Shanghai"
 }
 
-CONTENT_TYPE = {'mp4': 'video/mp4', 'mp3': 'audio/mpeg', 'wav': 'audio/wav'}
-
-VIDEO_PATH = os.path.join(path, 'static', 'videos')
-os.makedirs(VIDEO_PATH, exist_ok=True)
+CONTENT_TYPE = {
+    'mp4': 'video/mp4',
+    'mkv': 'video/x-matroska',
+    'avi': 'video/x-msvideo',
+    'mov': 'video/quicktime',
+    'webm': 'video/webm',
+    'm4v': 'video/x-m4v',
+    'mp3': 'audio/mpeg',
+    'wav': 'audio/wav',
+}
 
 log_path = os.path.join(path, 'logs')
 if not os.path.exists(log_path):
@@ -59,6 +89,5 @@ logger.setLevel(level=log_level.get(get_config("level")))
 
 file_handler = logging.handlers.TimedRotatingFileHandler(os.path.join(log_path, 'access.log'), when='midnight', interval=1, backupCount=7)
 file_handler.suffix = '%Y-%m-%d'
-# file_handler = logging.StreamHandler()
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)

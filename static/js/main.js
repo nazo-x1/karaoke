@@ -4,6 +4,7 @@ let vocalsVolume = localStorage.getItem("vocalsVolume")? parseFloat(localStorage
 let accompanimentVolume = localStorage.getItem("accompanimentVolume")? parseFloat(localStorage.getItem("accompanimentVolume")): 1;
 let isBindEvent = false;
 let searchTimeout = null;
+let currentPlaybackMode = 'plain';
 const l_body = document.querySelector('.l_body');
 const sidebar = {
   leftbar: () => {
@@ -24,6 +25,28 @@ const sidebar = {
       l_body.removeAttribute('rightbar');
     }
   }
+};
+
+function setEnhancedControlsVisible(visible) {
+    const display = visible ? '' : 'none';
+    ['switchVocal', 'change-volume'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = display;
+    });
+    if (!visible) {
+        document.getElementsByClassName("volume-setting")[0].style.display = 'none';
+    }
+}
+
+function updateEnhancedControlsFromQueue(data) {
+    if (!data || data.total < 1) {
+        currentPlaybackMode = 'plain';
+        setEnhancedControlsVisible(false);
+        return;
+    }
+    const playing = data.data.find(item => item.is_sing === -1) || data.data[0];
+    currentPlaybackMode = playing.playback_mode === 'enhanced' ? 'enhanced' : 'plain';
+    setEnhancedControlsVisible(currentPlaybackMode === 'enhanced');
 }
 
 document.getElementById("rotate-img").addEventListener('click', () => {
@@ -36,22 +59,23 @@ document.getElementById("rotate-img").addEventListener('click', () => {
             send_message(1, 1);
         }
     }
-})
+});
 
-document.getElementById("re-sing").addEventListener('click', () => {send_message(2, 0);})
-document.getElementById("next-song").addEventListener('click', () => {send_message(3, 0);})
+document.getElementById("re-sing").addEventListener('click', () => {send_message(2, 0);});
+document.getElementById("next-song").addEventListener('click', () => {send_message(3, 0);});
 document.getElementById("switchVocal").addEventListener('click', () => {
+    if (currentPlaybackMode !== 'enhanced') return;
     let switch_button = document.getElementById("switchVocal");
     if (switch_button.getElementsByTagName('p')[0].innerText === "原唱") {
         send_message(4, 1);
     } else {
         send_message(4, 0);
     }
-})
-document.getElementById("guzhang").addEventListener('click', () => {send_message(7, 'guzhang');})
-document.getElementById("huanhu").addEventListener('click', () => {send_message(7, 'huanhu');})
-document.getElementById("daxiao").addEventListener('click', () => {send_message(7, 'daxiao');})
-document.getElementById("xixu").addEventListener('click', () => {send_message(7, 'xixu');})
+});
+document.getElementById("guzhang").addEventListener('click', () => {send_message(7, 'guzhang');});
+document.getElementById("huanhu").addEventListener('click', () => {send_message(7, 'huanhu');});
+document.getElementById("daxiao").addEventListener('click', () => {send_message(7, 'daxiao');});
+document.getElementById("xixu").addEventListener('click', () => {send_message(7, 'xixu');});
 document.getElementById("search-text").addEventListener('input', () =>{
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
@@ -59,20 +83,24 @@ document.getElementById("search-text").addEventListener('input', () =>{
         if (keyWord === undefined || keyWord === '') {document.getElementsByClassName("song-container")[0].innerHTML = ''; return;}
         $.ajax({
             type: "GET",
-            url: server + "/song/list?q=" + keyWord,
+            url: server + "/song/list?q=" + encodeURIComponent(keyWord),
             success: function (data) {
                 if (data.code === 0) {
                     let s = "";
                     data.data.forEach(item => {
-                        s = s + `<div class="song-list"><div>${item.name}</div><a onclick="sing_song(${item.id})">点歌</a></div>`
-                    })
+                        const link = item.can_queue
+                            ? `<a onclick="sing_song(${item.id})">点歌</a>`
+                            : `<span style="color:#999">不可用</span>`;
+                        s = s + `<div class="song-list"><div>${item.display_name || item.name}</div>${link}</div>`;
+                    });
                     document.getElementsByClassName("song-container")[0].innerHTML = s;
                 }
             }
-        })
-    }, 500)
-})
+        });
+    }, 500);
+});
 document.getElementById("change-volume").addEventListener("click", () => {
+    if (currentPlaybackMode !== 'enhanced') return;
     let volume_setting = document.getElementsByClassName("volume-setting")[0];
     if (volume_setting.style.display === 'flex') {
         volume_setting.style.display = 'none';
@@ -81,7 +109,7 @@ document.getElementById("change-volume").addEventListener("click", () => {
     volume_setting.style.display = 'flex';
     initVolume("volume-vocals-progress");
     initVolume("volume-acc-progress");
-})
+});
 
 startRotate = () => {
     if(!document.getElementById("main-image").classList.contains('rotating')) {
@@ -90,7 +118,7 @@ startRotate = () => {
     document.getElementById("rotate-img").getElementsByTagName("img")[0].src = "/static/img/stopRotate.svg";
     document.getElementById("rotate-img").getElementsByTagName("p")[0].innerText = "暂停";
     document.getElementById("main-image").style.transform = `rotate(${angle}deg)`;
-}
+};
 
 stopRotate = () => {
     document.getElementById("rotate-img").getElementsByTagName("img")[0].src = "/static/img/startRotate.svg";
@@ -101,7 +129,7 @@ stopRotate = () => {
     angle = Math.round(Math.atan2(matrix.m21, matrix.m11) * (180 / Math.PI));
     image.classList.remove('rotating');
     image.style.transform = `rotate(${angle}deg)`;
-}
+};
 
 send_message = (code, data) => {
     $.ajax({
@@ -112,8 +140,8 @@ send_message = (code, data) => {
                 console.log(data.msg);
             }
         }
-    })
-}
+    });
+};
 
 getSingList = () => {
     $.ajax({
@@ -121,6 +149,7 @@ getSingList = () => {
         url: server + "/song/singHistory/pendingAll",
         success: function (data) {
             if (data.code === 0) {
+                updateEnhancedControlsFromQueue(data);
                 if (data.total > 0) {
                     if (data.data[0].is_sing === -1) {
                         document.getElementsByClassName("current-song")[0].innerText = data.data[0].name;
@@ -142,8 +171,8 @@ getSingList = () => {
                 }
                 let s = "";
                 data.data.forEach(item => {
-                    s = s + `<div class="song-list"><div>${item.name}</div><a onclick="set_top(${item.id})">置顶</a><a onclick="delete_from_list(${item.id})">删除</a></div>`
-                })
+                    s = s + `<div class="song-list"><div>${item.name}</div><a onclick="set_top(${item.id})">置顶</a><a onclick="delete_from_list(${item.id})">删除</a></div>`;
+                });
                 document.getElementsByClassName("added-container")[0].innerHTML = s;
                 document.getElementById("added-song-num").innerText = data.total;
                 document.getElementById("added-song-num1").innerText = data.total;
@@ -151,19 +180,20 @@ getSingList = () => {
                 console.log(data.msg);
             }
         }
-    })
-}
+    });
+};
 
 switchVocal = (flag) => {
+    if (currentPlaybackMode !== 'enhanced') return;
     let switch_button = document.getElementById("switchVocal");
     if (flag === 'ON') {
-        switch_button.getElementsByTagName('p')[0].innerText = "原唱"
+        switch_button.getElementsByTagName('p')[0].innerText = "原唱";
         switch_button.style.filter = "grayscale(0)";
     } else {
-        switch_button.getElementsByTagName('p')[0].innerText = "伴奏"
+        switch_button.getElementsByTagName('p')[0].innerText = "伴奏";
         switch_button.style.filter = "grayscale(1)";
     }
-}
+};
 
 initVolume = (eleId) => {
     let mdown = false;
@@ -179,21 +209,21 @@ initVolume = (eleId) => {
     if (isBindEvent) {return;}
     progressEle.getElementsByClassName("mkpgb-dot")[0].addEventListener("mousedown", (e) => {
         e.preventDefault();
-    })
+    });
     progressEle.addEventListener("mousedown", (e) => {
         mdown = true;
         isBindEvent = true;
         barMove(e);
-    })
+    });
     progressEle.addEventListener("mousemove", (e) => {
         barMove(e);
-    })
+    });
     progressEle.addEventListener("mouseup", (e) => {
         if (eleId === "volume-vocals-progress") {send_message(5, vocalsVolume);
         } else {send_message(6, accompanimentVolume);}
         mdown = false;
         isBindEvent = true;
-    })
+    });
     function barMove(e) {
         if(!mdown) return;
         let percent = 0;
@@ -213,7 +243,7 @@ initVolume = (eleId) => {
         progressEle.getElementsByClassName("mkpgb-dot")[0].style.left = percent * 100 + '%';
         return true;
     }
-}
+};
 
 function sing_song(file_id) {
     $.ajax({
@@ -224,7 +254,7 @@ function sing_song(file_id) {
                 console.log(data.msg);
             }
         }
-    })
+    });
 }
 
 function set_top(file_id) {
@@ -236,7 +266,7 @@ function set_top(file_id) {
                 console.log(data.msg);
             }
         }
-    })
+    });
 }
 
 function delete_from_list(file_id) {
@@ -248,10 +278,11 @@ function delete_from_list(file_id) {
                 console.log(data.msg);
             }
         }
-    })
+    });
 }
 
 window.onload = function() {
+    setEnhancedControlsVisible(false);
     const eventSource = new EventSource(server + "/song/events");
     eventSource.onmessage = function(event) {
         const message = JSON.parse(event.data);
@@ -261,8 +292,10 @@ window.onload = function() {
                 if (message.data === '3') {startRotate(); getSingList();}
                 break;
             case 4:
-                if (message.data === '0') {switchVocal("ON");}
-                if (message.data === '1') {switchVocal("OFF");}
+                if (currentPlaybackMode === 'enhanced') {
+                    if (message.data === '0') {switchVocal("ON");}
+                    if (message.data === '1') {switchVocal("OFF");}
+                }
                 break;
             case 5:
                 vocalsVolume = parseFloat(message.data);

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>编辑歌曲</title>
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="/static/css/index.css">
+    <link rel="stylesheet" href="/static/css/toast.style.css">
+    <script type="text/javascript" src="/static/js/jq.min.js"></script>
+    <script type="text/javascript" src="/static/js/toast.script.js"></script>
+    <style>
+        .edit-form { max-width: 640px; margin: 2rem auto; padding: 1rem; }
+        .edit-form label { display: block; margin-top: 1rem; font-weight: bold; }
+        .edit-form input[readonly] { background: #f5f5f5; width: 100%; padding: .5rem; box-sizing: border-box; }
+        .edit-form input[type=text] { width: 100%; padding: .5rem; box-sizing: border-box; }
+        .meta { color: #555; margin-top: .5rem; line-height: 1.6; }
+        .actions { margin-top: 1.5rem; display: flex; gap: .75rem; flex-wrap: wrap; }
+        .hint { font-size: .9rem; color: #666; margin-top: 1rem; padding: .75rem; background: #fafafa; border-radius: 4px; }
+    </style>
+</head>
+<body>
+<div class="edit-form">
+    <h2>编辑歌曲</h2>
+    <label for="display-name">展示名</label>
+    <input id="display-name" type="text" autocomplete="off">
+    <label>源文件路径（只读）</label>
+    <input id="source-path" type="text" readonly>
+    <div class="meta" id="song-meta"></div>
+    <div class="hint">
+        增强模式三件套请放入 <code>/KTV/__override__/</code>，命名：<br>
+        <code>{展示名}.mp4</code>、<code>{展示名}_vocals.mp3</code>、<code>{展示名}_accompaniment.mp3</code><br>
+        修改展示名后需重新检测覆写文件是否匹配。
+    </div>
+    <div class="actions">
+        <button type="button" id="save-btn">保存</button>
+        <button type="button" id="detect-btn">检测覆写文件</button>
+        <button type="button" id="auto-btn" disabled title="第二期支持">自动处理（第二期）</button>
+        <a href="{{ prefix }}/">返回曲库</a>
+    </div>
+</div>
+<script>
+    localStorage.setItem("server", "{{ prefix }}");
+    window.SONG_ID = {{ song_id }};
+</script>
+<script type="text/javascript" src="/static/js/song_edit.js"></script>
+</body>
+</html>

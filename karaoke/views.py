@@ -2,21 +2,34 @@
 # -*- coding: utf-8 -*-
 # @Author: leeyoshinari
 
-import json
-import os.path
 import asyncio
-import subprocess
+import json
+import os
 import traceback
-from typing import List
-from urllib.parse import unquote
+from typing import List, Optional
+from urllib.parse import quote, unquote
+
 from tortoise.exceptions import DoesNotExist
+from fastapi import Request
+
+from karaoke.media import file_ext, probe_video_playable
+from karaoke.models import Song, History, SongList, HistoryList
+from karaoke.playback import refresh_playback_mode, resolve, stream_path_for_kind, override_triplet_paths
 from karaoke.results import Result
-from karaoke.models import Files, History, FileList, HistoryList
-from settings import logger, FILE_PATH, PAGE_SIZE, VIDEO_PATH
+from karaoke.responses import StreamResponse
+from karaoke.scanner import scan_root
+from settings import (
+    logger,
+    PAGE_SIZE,
+    KEEP_PATH,
+    SCAN_VIDEO_EXTS,
+    DEFAULT_DUPLICATE_POLICY,
+    FFPROBE_ON_IMPORT,
+    CONTENT_TYPE,
+)
 
 
 clients: List[asyncio.Queue] = []
-ffmpeg_cmd = 'ffmpeg'
 
 
 def _safe_filename(filename: str) -> str:
@@ -26,39 +39,31 @@ def _safe_filename(filename: str) -> str:
     return name.replace('\x00', '').strip()
 
 
-def _stem_and_ext(filename: str) -> tuple:
-    name = _safe_filename(filename)
-    if '.' in name:
-        stem, ext = name.rsplit('.', 1)
-        return stem, ext.lower()
-    return name, ''
+def _stem(filename: str) -> str:
+    return os.path.splitext(_safe_filename(filename))[0]
 
 
-def _remove_if_exists(file_path: str):
-    if os.path.isfile(file_path):
-        os.remove(file_path)
-
-
-def run_ffmpeg(args: list):
-    cmd = [ffmpeg_cmd, '-y', '-nostdin'] + args
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
-
-
-async def read_preprocess_file(file_path, start_index=0):
+async def read_stream_file(file_path, start_index=0, end_index=None):
     with open(file_path, 'rb') as f:
         f.seek(start_index)
+        remaining = None if end_index is None else end_index - start_index + 1
         while True:
-            chunk = f.read(65536)
+            chunk_size = 65536 if remaining is None else min(65536, remaining)
+            chunk = f.read(chunk_size)
             if not chunk:
                 break
             yield chunk
+            if remaining is not None:
+                remaining -= len(chunk)
+                if remaining <= 0:
+                    break
 
 
 async def broadcast_data(data: dict):
     for client in clients[:]:
         try:
             await client.put(json.dumps(data, ensure_ascii=False))
-        except:
+        except Exception:
             logger.error(traceback.format_exc())
 
 
@@ -68,32 +73,139 @@ async def init_history():
         for s in songs:
             s.is_sing = 1
             await s.save()
-    except:
+    except Exception:
         logger.error(traceback.format_exc())
 
 
-async def upload_file(query) -> Result:
+def _song_to_list_item(song: Song, profile=None) -> dict:
+    profile = profile or resolve(song)
+    c = song.create_time.strftime("%Y-%m-%d %H:%M:%S")
+    m = song.update_time.strftime("%Y-%m-%d %H:%M:%S")
+    return SongList(
+        id=song.id,
+        name=song.display_name,
+        display_name=song.display_name,
+        source_origin=song.source_origin,
+        playback_mode=profile.mode if profile.mode != 'not_ready' else song.playback_mode,
+        can_queue=profile.can_queue,
+        is_playable=song.is_playable,
+        source_path=song.source_path,
+        create_time=c,
+        update_time=m,
+    ).dict()
+
+
+
+async def _build_history_list(songs: List[History]) -> List[dict]:
+    ids = [s.id for s in songs]
+    song_map = {s.id: s for s in await Song.filter(id__in=ids)} if ids else {}
+    result = []
+    for h in songs:
+        song = song_map.get(h.id)
+        mode = 'plain'
+        if song:
+            mode = resolve(song).mode
+            if mode == 'not_ready':
+                mode = song.playback_mode
+        item = HistoryList(
+            id=h.id,
+            name=h.name,
+            times=h.times,
+            is_sing=h.is_sing,
+            is_top=h.is_top,
+            playback_mode=mode,
+        ).dict()
+        result.append(item)
+    return result
+
+
+async def upload_file(query: Request) -> Result:
     result = Result()
-    query = await query.form()
-    file_name = query['file'].filename
-    data = query['file'].file
-    try:
-        file_path = os.path.join(FILE_PATH, file_name)
-        song_name = file_name.replace('.mp4', '').replace('_vocals.mp3', '').replace('_accompaniment.mp3', '')
-        try:
-            file = await Files.get(name=song_name)
-        except DoesNotExist:
-            file = await Files.create(name=song_name, is_sing=0)
-        with open(file_path, 'wb') as f:
-            f.write(data.read())
-        result.msg = f"{file_name} 上传成功"
-        result.data = file.name
-        logger.info(result.msg)
-    except:
+    form = await query.form()
+    upload = form.get('file')
+    if not upload or not upload.filename:
         result.code = 1
-        result.data = file_name
+        result.msg = "未选择文件"
+        return result
+
+    filename = _safe_filename(upload.filename)
+    ext = file_ext(filename)
+    if ext not in SCAN_VIDEO_EXTS:
+        result.code = 1
+        result.msg = f"不支持的格式: {ext}"
+        result.data = filename
+        return result
+
+    duplicate_policy = form.get('duplicate_policy') or DEFAULT_DUPLICATE_POLICY
+    display_base = _stem(filename)
+    dest_path = os.path.join(KEEP_PATH, filename)
+
+    try:
+        existing = await Song.filter(source_path=dest_path).first()
+        name_conflict = await Song.filter(display_name=display_base).first()
+
+        if existing and duplicate_policy == 'skip':
+            result.msg = f"{filename} 已存在，已跳过"
+            result.data = display_base
+            return result
+
+        display_name = display_base
+        if name_conflict and name_conflict.source_path != dest_path:
+            if duplicate_policy == 'skip':
+                result.msg = f"{display_name} 已存在，已跳过"
+                result.data = display_base
+                return result
+            if duplicate_policy == 'rename':
+                used = {s.display_name for s in await Song.all()}
+                index = 2
+                while display_name in used:
+                    display_name = f"{display_base} ({index})"
+                    index += 1
+                stem, ext_part = os.path.splitext(filename)
+                dest_path = os.path.join(KEEP_PATH, f"{display_name}{ext_part}")
+
+        data = upload.file.read()
+        with open(dest_path, 'wb') as f:
+            f.write(data)
+
+        is_playable = probe_video_playable(dest_path) if FFPROBE_ON_IMPORT else True
+
+        if existing:
+            existing.display_name = display_name
+            existing.is_playable = is_playable
+            existing.source_origin = 'upload'
+            await existing.save()
+            song = existing
+        elif name_conflict and duplicate_policy == 'overwrite' and name_conflict.source_path != dest_path:
+            if os.path.isfile(name_conflict.source_path) and name_conflict.source_origin == 'upload':
+                os.remove(name_conflict.source_path)
+            name_conflict.source_path = dest_path
+            name_conflict.display_name = display_name
+            name_conflict.is_playable = is_playable
+            name_conflict.source_origin = 'upload'
+            name_conflict.source_rel = None
+            await name_conflict.save()
+            song = name_conflict
+        else:
+            song = await Song.create(
+                display_name=display_name,
+                source_path=dest_path,
+                source_origin='upload',
+                source_rel=None,
+                media_kind='video',
+                playback_mode='plain',
+                is_playable=is_playable,
+            )
+
+        await refresh_playback_mode(song)
+        result.msg = f"{filename} 上传成功"
+        result.data = song.display_name
+        logger.info(result.msg)
+    except Exception:
+        result.code = 1
+        result.data = filename
         result.msg = "系统错误"
-        logger.error(f"{file_name} 上传失败")
+        logger.error(f"{filename} 上传失败")
         logger.error(traceback.format_exc())
     return result
 
@@ -101,44 +213,153 @@ async def upload_file(query) -> Result:
 async def get_list(q: str, page: int) -> Result:
     result = Result()
     try:
+        qs = Song.all().order_by('-id')
         if q:
-            files = await Files.filter(name__contains=q).order_by('-id').offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
-            total_num = await Files.filter(name__contains=q).count()
+            qs = Song.filter(display_name__contains=q).order_by('-id')
+            total_num = await Song.filter(display_name__contains=q).count()
         else:
-            files = await Files.all().order_by('-id').offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
-            total_num = await Files.all().count()
-        file_list = [FileList.from_orm_format(f).dict() for f in files]
+            total_num = await Song.all().count()
+        songs = await qs.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+        file_list = [_song_to_list_item(s) for s in songs]
         result.data = file_list
         result.page = page
         result.total = len(result.data)
         result.totalPage = (total_num + PAGE_SIZE - 1) // PAGE_SIZE
         logger.info("查询歌曲列表成功 ~")
-    except:
+    except Exception:
         logger.error(traceback.format_exc())
         result.code = 1
         result.msg = "系统错误"
     return result
 
 
-async def delete_song(file_id: int) -> Result:
+async def get_song_detail(song_id: int) -> Result:
     result = Result()
     try:
-        file = await Files.get(id=file_id)
-        if os.path.exists(f"{FILE_PATH}/{file.name}.mp4"):
-            os.remove(f"{FILE_PATH}/{file.name}.mp4")
-        if os.path.exists(f"{FILE_PATH}/{file.name}_vocals.mp3"):
-            os.remove(f'{FILE_PATH}/{file.name}_vocals.mp3')
-        if os.path.exists(f"{FILE_PATH}/{file.name}_accompaniment.mp3"):
-            os.remove(f'{FILE_PATH}/{file.name}_accompaniment.mp3')
+        song = await Song.get(id=song_id)
+        profile = await refresh_playback_mode(song)
+        triplet = override_triplet_paths(song.display_name)
+        result.data = {
+            'id': song.id,
+            'display_name': song.display_name,
+            'source_path': song.source_path,
+            'source_origin': song.source_origin,
+            'source_rel': song.source_rel,
+            'playback_mode': profile.mode if profile.mode != 'not_ready' else song.playback_mode,
+            'can_queue': profile.can_queue,
+            'is_playable': song.is_playable,
+            'override_files': {
+                'video': os.path.isfile(triplet['video']),
+                'vocals': os.path.isfile(triplet['vocals']),
+                'accompaniment': os.path.isfile(triplet['accompaniment']),
+            },
+        }
+    except DoesNotExist:
+        result.code = 1
+        result.msg = "歌曲不存在"
+    except Exception:
+        logger.error(traceback.format_exc())
+        result.code = 1
+        result.msg = "系统错误"
+    return result
+
+
+async def get_playback_profile(song_id: int) -> Result:
+    result = Result()
+    try:
+        song = await Song.get(id=song_id)
+        profile = await refresh_playback_mode(song)
+        result.data = {
+            'id': song.id,
+            'display_name': song.display_name,
+            'mode': profile.mode,
+            'can_queue': profile.can_queue,
+            'streams': {
+                'video': profile.video_path is not None,
+                'vocals': profile.vocals_path is not None,
+                'accompaniment': profile.accompaniment_path is not None,
+            },
+        }
+    except DoesNotExist:
+        result.code = 1
+        result.msg = "歌曲不存在"
+    except Exception:
+        logger.error(traceback.format_exc())
+        result.code = 1
+        result.msg = "系统错误"
+    return result
+
+
+async def patch_song(song_id: int, body: dict) -> Result:
+    result = Result()
+    try:
+        song = await Song.get(id=song_id)
+        display_name = body.get('display_name')
+        if display_name:
+            song.display_name = display_name.strip()[:256]
+            await song.save(update_fields=['display_name', 'update_time'])
+            histories = await History.filter(id=song.id)
+            for h in histories:
+                h.name = song.display_name
+                await h.save(update_fields=['name', 'update_time'])
+        profile = await refresh_playback_mode(song)
+        result.data = _song_to_list_item(song, profile)
+        result.msg = "更新成功"
+    except DoesNotExist:
+        result.code = 1
+        result.msg = "歌曲不存在"
+    except Exception:
+        logger.error(traceback.format_exc())
+        result.code = 1
+        result.msg = "系统错误"
+    return result
+
+
+async def detect_override(song_id: int) -> Result:
+    result = Result()
+    try:
+        song = await Song.get(id=song_id)
+        profile = await refresh_playback_mode(song)
+        triplet = override_triplet_paths(song.display_name)
+        result.data = {
+            'playback_mode': profile.mode if profile.mode != 'not_ready' else song.playback_mode,
+            'can_queue': profile.can_queue,
+            'override_files': {
+                'video': os.path.isfile(triplet['video']),
+                'vocals': os.path.isfile(triplet['vocals']),
+                'accompaniment': os.path.isfile(triplet['accompaniment']),
+            },
+        }
+        result.msg = "检测完成"
+    except DoesNotExist:
+        result.code = 1
+        result.msg = "歌曲不存在"
+    except Exception:
+        logger.error(traceback.format_exc())
+        result.code = 1
+        result.msg = "系统错误"
+    return result
+
+
+async def delete_song(file_id: int, delete_disk: bool = False) -> Result:
+    result = Result()
+    try:
+        song = await Song.get(id=file_id)
+        if delete_disk and song.source_origin == 'upload' and os.path.isfile(song.source_path):
+            os.remove(song.source_path)
         try:
             history = await History.get(id=file_id)
             await history.delete()
         except DoesNotExist:
             pass
-        await file.delete()
-        result.msg = f"{file.name} 删除成功"
+        name = song.display_name
+        await song.delete()
+        result.msg = f"{name} 删除成功"
         logger.info(result.msg)
-    except:
+    except DoesNotExist:
+        result.code = 1
+        result.msg = "歌曲不存在"
+    except Exception:
         logger.error(traceback.format_exc())
         result.code = 1
         result.msg = "系统错误"
@@ -153,7 +374,7 @@ async def delete_history(file_id: int) -> Result:
         result.msg = f"{history.name} 播放记录删除成功"
         await broadcast_data({"code": 8})
         logger.info(result.msg)
-    except:
+    except Exception:
         logger.error(traceback.format_exc())
         result.code = 1
         result.msg = "系统错误"
@@ -163,38 +384,40 @@ async def delete_history(file_id: int) -> Result:
 async def sing_song(file_id: int) -> Result:
     result = Result()
     try:
-        msg_list = []
-        file = await Files.get(id=file_id)
-        if file.is_sing == 0:
-            if not os.path.exists(f"{FILE_PATH}/{file.name}.mp4"):
-                msg_list.append("视频文件不存在")
-            if not os.path.exists(f"{FILE_PATH}/{file.name}_vocals.mp3"):
-                msg_list.append("人声文件不存在")
-            if not os.path.exists(f"{FILE_PATH}/{file.name}_accompaniment.mp3"):
-                msg_list.append("伴奏文件不存在")
-            if len(msg_list) > 0:
-                result.code = 1
-                result.msg = '，'.join(msg_list)
-                return result
-            else:
-                file.is_sing = 1
-                await file.save()
-                _ = await History.create(id=file.id, name=file.name)
-                await broadcast_data({"code": 8})
-        else:
-            try:
-                history = await History.get(id=file.id)
-                if history.is_sing == 1:
-                    history.is_sing = 0
-                    history.is_top = 0
-                    await history.save()
-            except DoesNotExist:
-                _ = await History.create(id=file.id, name=file.name, is_sing=0, is_top=0)
-            finally:
-                await broadcast_data({"code": 8})
-        result.msg = f"{file.name} 点歌成功"
+        song = await Song.get(id=file_id)
+        profile = await refresh_playback_mode(song)
+        if not profile.can_queue:
+            msgs = []
+            if not song.is_playable or not os.path.isfile(song.source_path):
+                msgs.append("源视频不可播放或不存在")
+            triplet = override_triplet_paths(song.display_name)
+            if not all(os.path.isfile(p) for p in triplet.values()):
+                if msgs:
+                    pass
+                else:
+                    msgs.append("增强资源不完整且源视频不可用")
+            result.code = 1
+            result.msg = '，'.join(msgs) if msgs else "当前歌曲不可点歌"
+            return result
+
+        try:
+            history = await History.get(id=song.id)
+            if history.is_sing == 1:
+                history.is_sing = 0
+                history.is_top = 0
+                await history.save()
+            elif history.is_sing == 0:
+                pass
+        except DoesNotExist:
+            await History.create(id=song.id, name=song.display_name, is_sing=0, is_top=0)
+        await broadcast_data({"code": 8})
+        result.msg = f"{song.display_name} 点歌成功"
+        result.data = {'playback_mode': profile.mode}
         logger.info(result.msg)
-    except:
+    except DoesNotExist:
+        result.code = 1
+        result.msg = "歌曲不存在"
+    except Exception:
         logger.error(traceback.format_exc())
         result.code = 1
         result.msg = "系统错误"
@@ -220,11 +443,11 @@ async def history_list(query_type: str) -> Result:
             songs = songs + await History.filter(is_sing=0, is_top=1).order_by('-update_time')
             songs = songs + await History.filter(is_sing=0, is_top=0).order_by('update_time').offset(0).limit(4)
             msg = "查询已点列表最近的歌曲成功"
-        song_list = [HistoryList.from_orm(f).dict() for f in songs]
+        song_list = await _build_history_list(songs)
         result.data = song_list
         result.total = len(result.data)
         logger.info(msg)
-    except:
+    except Exception:
         logger.error(traceback.format_exc())
         result.code = 1
         result.msg = "系统错误"
@@ -240,7 +463,7 @@ async def set_top(file_id: int) -> Result:
         result.msg = f"{history.name} 置顶成功"
         await broadcast_data({"code": 8})
         logger.info(result.msg)
-    except:
+    except Exception:
         logger.error(traceback.format_exc())
         result.code = 1
         result.msg = "系统错误"
@@ -256,7 +479,7 @@ async def set_singing(file_id: int) -> Result:
         await history.save()
         result.msg = f"{history.name} 设置-1成功"
         logger.info(result.msg)
-    except:
+    except Exception:
         logger.error(traceback.format_exc())
         result.code = 1
         result.msg = "系统错误"
@@ -274,158 +497,104 @@ async def set_singed(file_id: int) -> Result:
         result.msg = f"{history.name} 设置1成功"
         await broadcast_data({"code": 8})
         logger.info(result.msg)
-    except:
+    except Exception:
         logger.error(traceback.format_exc())
         result.code = 1
         result.msg = "系统错误"
     return result
 
 
-async def upload_video(query) -> Result:
+async def run_scan(body: dict) -> Result:
     result = Result()
-    form = await query.form()
-    upload = form['file']
-    file_name = _safe_filename(form.get('filename') or upload.filename)
-    data = upload.file
     try:
-        if not file_name:
+        root = body.get('root', '').strip()
+        if not root:
             result.code = 1
-            result.msg = "无法获取文件名"
+            result.msg = "请指定扫描根路径"
             return result
-        stem, file_format = _stem_and_ext(file_name)
-        if not file_format:
-            file_format = 'mp4'
-            stem = file_name
-        file_path = os.path.join(VIDEO_PATH, f"{stem}_origin.{file_format}")
-        with open(file_path, 'wb') as f:
-            f.write(data.read())
-        result.msg = f"{file_name} 上传成功"
-        result.data = file_name
-        logger.info(result.msg)
-    except:
+        stats = await scan_root(
+            root,
+            duplicate_policy=body.get('duplicate_policy'),
+            validate=body.get('validate'),
+            dry_run=False,
+        )
+        result.data = stats.as_dict()
+        result.msg = "扫描完成"
+    except FileNotFoundError:
         result.code = 1
-        result.data = file_name
-        result.msg = "系统错误"
-        logger.error(f"{file_name} 上传失败")
+        result.msg = "扫描路径不存在或不可读"
+    except Exception:
         logger.error(traceback.format_exc())
+        result.code = 1
+        result.msg = "系统错误"
     return result
 
 
-async def download_preprocess_file(file_name: str):
-    from urllib.parse import quote
-    from karaoke.responses import StreamResponse
-    from settings import CONTENT_TYPE
+async def preview_scan(root: str, duplicate_policy: Optional[str], validate: Optional[bool]) -> Result:
+    result = Result()
     try:
-        file_name = _safe_filename(file_name)
-        if not file_name:
-            return Result(code=1, msg="无效的文件名")
-        file_path = os.path.join(VIDEO_PATH, file_name)
-        if not os.path.isfile(file_path):
+        if not root.strip():
+            result.code = 1
+            result.msg = "请指定扫描根路径"
+            return result
+        stats = await scan_root(
+            root.strip(),
+            duplicate_policy=duplicate_policy,
+            validate=validate,
+            dry_run=True,
+        )
+        result.data = {**stats.as_dict(), 'preview': stats.preview[:200]}
+        result.msg = "预览完成"
+    except FileNotFoundError:
+        result.code = 1
+        result.msg = "扫描路径不存在或不可读"
+    except Exception:
+        logger.error(traceback.format_exc())
+        result.code = 1
+        result.msg = "系统错误"
+    return result
+
+
+async def stream_song(request: Request, song_id: int, kind: str):
+    try:
+        if kind not in ('video', 'vocals', 'accompaniment'):
+            return Result(code=1, msg="无效的流类型")
+        song = await Song.get(id=song_id)
+        file_path = stream_path_for_kind(song, kind)
+        if not file_path or not os.path.isfile(file_path):
             return Result(code=1, msg="文件不存在")
-        file_format = file_name.rsplit('.', 1)[-1].lower()
+
+        file_size = os.path.getsize(file_path)
+        ext = file_ext(file_path)
+        media_type = CONTENT_TYPE.get(ext, 'application/octet-stream')
+        range_header = request.headers.get('range')
+        start = 0
+        end = file_size - 1
+        status_code = 200
         headers = {
-            'Content-Length': str(os.path.getsize(file_path)),
-            'Content-Disposition': f"attachment; filename*=UTF-8''{quote(file_name)}",
+            'Accept-Ranges': 'bytes',
+            'Content-Disposition': f"inline; filename*=UTF-8''{quote(os.path.basename(file_path))}",
         }
+
+        if range_header and range_header.startswith('bytes='):
+            range_spec = range_header.replace('bytes=', '').split('-', 1)
+            start = int(range_spec[0]) if range_spec[0] else 0
+            end = int(range_spec[1]) if len(range_spec) > 1 and range_spec[1] else file_size - 1
+            end = min(end, file_size - 1)
+            status_code = 206
+            headers['Content-Range'] = f'bytes {start}-{end}/{file_size}'
+            headers['Content-Length'] = str(end - start + 1)
+        else:
+            headers['Content-Length'] = str(file_size)
+
         return StreamResponse(
-            read_preprocess_file(file_path),
-            media_type=CONTENT_TYPE.get(file_format, 'application/octet-stream'),
+            read_stream_file(file_path, start, end),
+            status_code=status_code,
+            media_type=media_type,
             headers=headers,
         )
-    except:
+    except DoesNotExist:
+        return Result(code=1, msg="歌曲不存在")
+    except Exception:
         logger.error(traceback.format_exc())
         return Result(code=1, msg="系统错误")
-
-
-async def deal_video(file_name: str) -> Result:
-    result = Result()
-    try:
-        stem, ext = _stem_and_ext(file_name)
-        if not stem:
-            result.code = 1
-            result.msg = "无效的文件名"
-            return result
-        mp4_file = os.path.join(VIDEO_PATH, f"{stem}_origin.mp4")
-        mp3_file = os.path.join(VIDEO_PATH, f"{stem}.wav")
-        no_voice_file = os.path.join(VIDEO_PATH, f"{stem}_voice.mp4")
-        video_file = os.path.join(VIDEO_PATH, f"{stem}.mp4")
-        for path in (mp3_file, no_voice_file, video_file):
-            _remove_if_exists(path)
-        run_ffmpeg(['-i', mp4_file, '-q:a', '0', '-map', 'a', mp3_file])
-        run_ffmpeg(['-i', mp4_file, '-an', '-vcodec', 'copy', no_voice_file])
-        run_ffmpeg(['-i', no_voice_file, '-map_metadata', '0', '-c:v', 'copy', '-c:a', 'copy',
-                    '-movflags', '+faststart', video_file])
-        result.data = {"mp3": f"{stem}.wav", "video": f"{stem}.mp4"}
-        logger.info(f"{stem} 视频预处理完成")
-    except:
-        logger.error(traceback.format_exc())
-        result.code = 1
-        result.msg = "系统错误"
-    return result
-
-
-async def convert_video(file_name: str) -> Result:
-    result = Result()
-    try:
-        stem, file_format = _stem_and_ext(file_name)
-        if not stem or not file_format:
-            result.code = 1
-            result.msg = "无效的文件名"
-            return result
-        audio_file = os.path.join(VIDEO_PATH, f"{stem}_origin.{file_format}")
-        mp4_file = os.path.join(VIDEO_PATH, f"{stem}.mp4")
-        _remove_if_exists(mp4_file)
-        run_ffmpeg(['-i', audio_file, '-c:v', 'libx264', '-c:a', 'aac', mp4_file])
-        result.data = {"mp4": f"{stem}.mp4", "video": f"{stem}.{file_format}"}
-        logger.info(f"{stem} 视频转 mp4 完成")
-    except:
-        logger.error(traceback.format_exc())
-        result.code = 1
-        result.msg = "系统错误"
-    return result
-
-
-async def convert_audio(file_name: str) -> Result:
-    result = Result()
-    try:
-        stem, file_format = _stem_and_ext(file_name)
-        if not stem or not file_format:
-            result.code = 1
-            result.msg = "无效的文件名"
-            return result
-        audio_file = os.path.join(VIDEO_PATH, f"{stem}_origin.{file_format}")
-        mp3_file = os.path.join(VIDEO_PATH, f"{stem}.mp3")
-        _remove_if_exists(mp3_file)
-        run_ffmpeg(['-i', audio_file, '-codec:a', 'libmp3lame', mp3_file])
-        result.data = {"mp3": f"{stem}.mp3", "audio": f"{stem}.{file_format}"}
-        logger.info(f"{stem} 音频转 mp3 完成")
-    except:
-        logger.error(traceback.format_exc())
-        result.code = 1
-        result.msg = "系统错误"
-    return result
-
-
-async def import_local_file(file_path: str) -> Result:
-    import shutil
-    result = Result()
-    try:
-        file_path_list = sorted(os.scandir(file_path), key=lambda x: x.stat().st_mtime)
-        for entry in file_path_list:
-            file_path = entry.path
-            try:
-                song_name = entry.name.replace('.mp4', '').replace('_vocals.mp3', '').replace('_accompaniment.mp3', '')
-                shutil.move(file_path, FILE_PATH)
-                try:
-                    _ = await Files.get(name=song_name)
-                except DoesNotExist:
-                    _ = await Files.create(name=song_name, is_sing=0)
-                logger.info(f"{file_path} move successfully ~")
-            except:
-                logger.error(traceback.format_exc())
-        result.data = file_path
-        logger.info(result.msg)
-    except:
-        result.code = 1
-        logger.error(traceback.format_exc())
-    return result

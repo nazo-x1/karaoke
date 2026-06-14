@@ -5,18 +5,16 @@
 import os
 import socket
 import traceback
-from urllib.parse import unquote
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from tortoise.contrib.fastapi import register_tortoise
 import settings
-from karaoke.responses import StreamResponse
 from karaoke.results import Result
 import karaoke.urls as my_urls
 
 
-prefix = ''  # url prefix, url的前缀
+prefix = ''
 app = FastAPI()
 register_tortoise(app=app, config=settings.TORTOISE_ORM)
 templates = Jinja2Templates(directory="templates")
@@ -28,56 +26,45 @@ def get_local_ip():
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("114.114.114.114", 80))
         host = s.getsockname()[0]
-    except:
+    except Exception:
         host = "0.0.0.0"
     finally:
         s.close()
     return host
 
 
-async def read_file(file_path, start_index=0):
-    with open(file_path, 'rb') as f:
-        f.seek(start_index)
-        while True:
-            chunk = f.read(65536)
-            if not chunk:
-                break
-            yield chunk
-
-
 @app.get(prefix + "/")
 async def index(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html", context={"request": request, "prefix": prefix})
+    return templates.TemplateResponse(
+        request=request, name="index.html", context={"request": request, "prefix": prefix}
+    )
 
 
-@app.get(prefix + "/dealVideo")
-async def deal_video(request: Request):
-    return templates.TemplateResponse(request=request, name="tool.html", context={"request": request, "prefix": prefix})
+@app.get(prefix + "/song/edit/{song_id}")
+async def song_edit_page(request: Request, song_id: int):
+    return templates.TemplateResponse(
+        request=request,
+        name="song_edit.html",
+        context={"request": request, "prefix": prefix, "song_id": song_id},
+    )
 
 
 @app.get(prefix + "/sing")
 async def play(request: Request):
     platform = request.query_params.get('type', None)
-    return templates.TemplateResponse(request=request, name="playing.html", context={"request": request, "prefix": prefix, "platform": platform})
+    return templates.TemplateResponse(
+        request=request,
+        name="playing.html",
+        context={"request": request, "prefix": prefix, "platform": platform},
+    )
 
 
 @app.get(prefix + "/song")
 async def deal_song(request: Request):
-    return templates.TemplateResponse(request=request, name="client.html", context={"request": request, "prefix": prefix})
+    return templates.TemplateResponse(
+        request=request, name="client.html", context={"request": request, "prefix": prefix}
+    )
 
-
-@app.get(prefix + "/download/{file_name}", summary="Download file (获取文件)")
-async def download_file(file_name: str):
-    try:
-        file_name = unquote(file_name)
-        file_path = os.path.join(settings.FILE_PATH, file_name)
-        file_format = file_name.split('.')[-1]
-        headers = {'Accept-Ranges': 'bytes', 'Content-Length': str(os.path.getsize(file_path)),
-                   'Content-Disposition': f'inline;filename="{file_name}"'}
-        return StreamResponse(read_file(file_path), media_type=settings.CONTENT_TYPE.get(file_format, 'application/octet-stream'), headers=headers)
-    except:
-        print(traceback.format_exc())
-        return Result(code=1, msg="System Error")
 
 app.include_router(my_urls.router, prefix=prefix)
 
