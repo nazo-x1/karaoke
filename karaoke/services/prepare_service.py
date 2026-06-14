@@ -19,6 +19,7 @@ from karaoke.domain.playback import (
 )
 from karaoke.domain.prepare_policy import profile_needs_prepare
 from karaoke.embedded import ensure_embedded_cache, probe_and_save_layout
+from karaoke.errors import format_api_error
 from karaoke.events.bus import event_bus
 from karaoke.infra.repositories.song_repo import SongRepository
 from karaoke.media import (
@@ -181,10 +182,9 @@ class PrepareTaskManager:
         except DoesNotExist:
             task.state = PrepareState.FAILED
             task.error = '歌曲不存在'
-        except Exception:
-            logger.error('prepare task failed song=%s\n%s', song_id, traceback.format_exc())
+        except Exception as exc:
             task.state = PrepareState.FAILED
-            task.error = '系统错误'
+            task.error = format_api_error(exc, "播放资源准备失败")
 
     @staticmethod
     def _to_dict(task: _PrepareTask) -> dict:

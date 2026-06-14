@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import os
-import traceback
 
 from tortoise.exceptions import DoesNotExist
 
@@ -10,12 +9,12 @@ from karaoke.domain.playback import persist_playback_mode, resolve
 from karaoke.domain.prepare_policy import profile_needs_prepare
 from karaoke.domain.queue_policy import QueueState
 from karaoke.dto.mappers import history_item
+from karaoke.errors import fail_result
 from karaoke.events.bus import event_bus
 from karaoke.infra.repositories.history_repo import HistoryRepository
 from karaoke.infra.repositories.song_repo import SongRepository
 from karaoke.results import Result
 from karaoke.services.prepare_service import PrepareService
-from settings import logger
 
 
 class QueueService:
@@ -75,10 +74,8 @@ class QueueService:
         except DoesNotExist:
             result.code = 1
             result.msg = "歌曲不存在"
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "点歌失败")
         return result
 
     async def list_pending(self) -> Result:
@@ -105,10 +102,8 @@ class QueueService:
                 return result
             result.data = await self._build_list(histories)
             result.total = len(result.data)
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "获取队列失败")
         return result
 
     async def set_top(self, song_id: int) -> Result:
@@ -119,10 +114,11 @@ class QueueService:
             await self._histories.save(history, ['is_top', 'update_time'])
             result.msg = f"{history.name} 置顶成功"
             await event_bus.publish_queue_changed()
-        except Exception:
-            logger.error(traceback.format_exc())
+        except DoesNotExist:
             result.code = 1
-            result.msg = "系统错误"
+            result.msg = "歌曲不在队列中"
+        except Exception as exc:
+            fail_result(result, exc, "置顶失败")
         return result
 
     async def remove_if_exists(self, song_id: int) -> None:
@@ -137,8 +133,9 @@ class QueueService:
             await self._histories.delete(history)
             result.msg = f"{history.name} 播放记录删除成功"
             await event_bus.publish_queue_changed()
-        except Exception:
-            logger.error(traceback.format_exc())
+        except DoesNotExist:
             result.code = 1
-            result.msg = "系统错误"
+            result.msg = "歌曲不在队列中"
+        except Exception as exc:
+            fail_result(result, exc, "移除队列项失败")
         return result

@@ -3,7 +3,6 @@
 
 import asyncio
 import os
-import traceback
 
 from tortoise.exceptions import DoesNotExist
 from fastapi import Request
@@ -11,13 +10,13 @@ from fastapi import Request
 from karaoke.domain.playback import persist_playback_mode, resolve, stream_media_for_kind
 from karaoke.domain.queue_policy import QueueState
 from karaoke.dto.mappers import playback_api
+from karaoke.errors import fail_result, format_api_error
 from karaoke.events.bus import event_bus
 from karaoke.infra.repositories.history_repo import HistoryRepository
 from karaoke.infra.repositories.song_repo import SongRepository
 from karaoke.infra.streaming import build_stream_response, cache_not_ready_response
 from karaoke.results import Result
 from karaoke.services.prepare_service import PrepareService
-from settings import logger
 
 
 class PlaybackService:
@@ -41,10 +40,8 @@ class PlaybackService:
         except DoesNotExist:
             result.code = 1
             result.msg = "歌曲不存在"
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "获取播放配置失败")
         return result
 
     async def ensure_ready(self, song_id: int) -> Result:
@@ -67,10 +64,8 @@ class PlaybackService:
         except DoesNotExist:
             result.code = 1
             result.msg = "歌曲不存在"
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "准备播放资源失败")
         return result
 
     async def prepare_status(self, song_id: int) -> Result:
@@ -81,10 +76,8 @@ class PlaybackService:
         except DoesNotExist:
             result.code = 1
             result.msg = "歌曲不存在"
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "获取准备状态失败")
         return result
 
     async def stream(self, request: Request, song_id: int, kind: str):
@@ -102,9 +95,8 @@ class PlaybackService:
             return build_stream_response(request, file_path, media_type)
         except DoesNotExist:
             return Result(code=1, msg="歌曲不存在")
-        except Exception:
-            logger.error(traceback.format_exc())
-            return Result(code=1, msg="系统错误")
+        except Exception as exc:
+            return Result(code=1, msg=format_api_error(exc, "获取播放流失败"))
 
     async def mark_singing(self, song_id: int) -> Result:
         result = Result()
@@ -115,10 +107,11 @@ class PlaybackService:
             await self._histories.save(history, ['is_sing', 'is_top', 'update_time'])
             result.msg = f"{history.name} 设置-1成功"
             await event_bus.publish_queue_changed()
-        except Exception:
-            logger.error(traceback.format_exc())
+        except DoesNotExist:
             result.code = 1
-            result.msg = "系统错误"
+            result.msg = "歌曲不在队列中"
+        except Exception as exc:
+            fail_result(result, exc, "标记正在播放失败")
         return result
 
     async def mark_finished(self, song_id: int) -> Result:
@@ -131,10 +124,11 @@ class PlaybackService:
             await self._histories.save(history, ['is_sing', 'is_top', 'times', 'update_time'])
             result.msg = f"{history.name} 设置1成功"
             await event_bus.publish_queue_changed()
-        except Exception:
-            logger.error(traceback.format_exc())
+        except DoesNotExist:
             result.code = 1
-            result.msg = "系统错误"
+            result.msg = "歌曲不在队列中"
+        except Exception as exc:
+            fail_result(result, exc, "标记已唱完失败")
         return result
 
     async def send_command(self, code: int, data) -> Result:

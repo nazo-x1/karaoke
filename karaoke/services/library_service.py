@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import os
-import traceback
 from typing import Optional
 from urllib.parse import unquote
 
@@ -12,6 +11,7 @@ from fastapi import Request
 from karaoke.domain.playback import refresh_playback_mode
 from karaoke.dto.mappers import song_item
 from karaoke.embedded import probe_and_save_layout
+from karaoke.errors import fail_result, format_api_error
 from karaoke.infra.repositories.song_repo import SongRepository
 from karaoke.results import Result
 from karaoke.scanner import scan_root
@@ -131,11 +131,10 @@ class LibraryService:
             result.msg = f"{filename} 上传成功"
             result.data = song.display_name
             logger.info(result.msg)
-        except Exception:
+        except Exception as exc:
             result.code = 1
             result.data = filename
-            result.msg = "系统错误"
-            logger.error(f"{filename} 上传失败\n{traceback.format_exc()}")
+            result.msg = format_api_error(exc, f"{filename} 上传失败")
         return result
 
     async def get_list(self, q: str, page: int) -> Result:
@@ -146,13 +145,9 @@ class LibraryService:
             result.page = page
             result.total = total_num
             result.totalPage = (total_num + PAGE_SIZE - 1) // PAGE_SIZE if total_num else 0
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "获取曲库列表失败")
         return result
-
-    async def delete_song(self, song_id: int, delete_disk: bool = False) -> Result:
         result = Result()
         try:
             song = await self._songs.get(song_id)
@@ -165,13 +160,9 @@ class LibraryService:
         except DoesNotExist:
             result.code = 1
             result.msg = "歌曲不存在"
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "删除歌曲失败")
         return result
-
-    async def run_scan(self, body: dict) -> Result:
         result = Result()
         try:
             root = body.get('root', '').strip()
@@ -190,10 +181,8 @@ class LibraryService:
         except FileNotFoundError:
             result.code = 1
             result.msg = "扫描路径不存在或不可读"
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "扫描导入失败")
         return result
 
     async def preview_scan(self, root: str, duplicate_policy: Optional[str], validate: Optional[bool]) -> Result:
@@ -214,8 +203,6 @@ class LibraryService:
         except FileNotFoundError:
             result.code = 1
             result.msg = "扫描路径不存在或不可读"
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "扫描预览失败")
         return result

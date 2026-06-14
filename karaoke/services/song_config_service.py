@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import traceback
-
 from tortoise.exceptions import DoesNotExist
 
 from karaoke.audio_layout import merge_manual_roles, parse_audio_layout, serialize_audio_layout
@@ -10,11 +8,11 @@ from karaoke.domain.playback import has_full_override, refresh_playback_mode, re
 from karaoke.domain.prepare_policy import profile_needs_prepare
 from karaoke.dto.mappers import playback_detail, song_item
 from karaoke.embedded import probe_and_save_layout
+from karaoke.errors import fail_result
 from karaoke.infra.repositories.history_repo import HistoryRepository
 from karaoke.infra.repositories.song_repo import SongRepository
 from karaoke.results import Result
 from karaoke.services.prepare_service import PrepareService
-from settings import logger
 
 
 class SongConfigService:
@@ -45,10 +43,8 @@ class SongConfigService:
         except DoesNotExist:
             result.code = 1
             result.msg = "歌曲不存在"
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "获取歌曲详情失败")
         return result
 
     async def patch(self, song_id: int, body: dict) -> Result:
@@ -73,10 +69,8 @@ class SongConfigService:
         except DoesNotExist:
             result.code = 1
             result.msg = "歌曲不存在"
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "更新歌曲失败")
         return result
 
     async def detect_playback(self, song_id: int) -> Result:
@@ -94,10 +88,8 @@ class SongConfigService:
         except DoesNotExist:
             result.code = 1
             result.msg = "歌曲不存在"
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "检测播放能力失败")
         return result
 
     async def request_prepare(self, song_id: int, wait: bool = False) -> Result:
@@ -128,8 +120,6 @@ class SongConfigService:
         except DoesNotExist:
             result.code = 1
             result.msg = "歌曲不存在"
-        except Exception:
-            logger.error(traceback.format_exc())
-            result.code = 1
-            result.msg = "系统错误"
+        except Exception as exc:
+            fail_result(result, exc, "预生成缓存失败")
         return result
