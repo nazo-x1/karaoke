@@ -4,8 +4,12 @@
 
 import sqlite3
 import traceback
+from typing import TYPE_CHECKING
 
 from settings import logger
+
+if TYPE_CHECKING:
+    from karaoke.dto.api_result import ApiResult
 
 
 def format_api_error(exc: Exception, action: str = "操作失败") -> str:
@@ -42,6 +46,6 @@ def format_api_error(exc: Exception, action: str = "操作失败") -> str:
     return f"{action}（{exc.__class__.__name__}）"
 
 
-def fail_result(result, exc: Exception, action: str) -> None:
+def fail_result(result: 'ApiResult', exc: Exception, action: str) -> None:
     result.code = 1
     result.msg = format_api_error(exc, action)

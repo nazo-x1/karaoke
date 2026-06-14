@@ -1,15 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from tortoise.exceptions import DoesNotExist
-
 from karaoke.dto.api_result import ApiResult
 from karaoke.infra.audio_layout import merge_manual_roles, parse_audio_layout, serialize_audio_layout
 from karaoke.domain.playback import has_full_override, refresh_playback_mode, resolve
 from karaoke.domain.prepare_policy import profile_needs_prepare
 from karaoke.dto.mappers import playback_detail, song_item
 from karaoke.infra.embedded import probe_and_save_layout
-from karaoke.errors import fail_result
 from karaoke.infra.repositories.history_repo import HistoryRepository
 from karaoke.infra.repositories.song_repo import SongRepository
 from karaoke.services.base import run_guarded
@@ -41,11 +38,10 @@ class SongConfigService:
                 **playback_detail(song, profile),
             }
 
-        return await run_guarded('获取歌曲详情失败', load, not_found_label='歌曲')
+        return await run_guarded('获取歌曲详情失败', load, not_found_msg='歌曲不存在')
 
     async def patch(self, song_id: int, body: dict) -> ApiResult:
-        result = ApiResult()
-        try:
+        async def action():
             song = await self._songs.get(song_id)
             display_name = body.get('display_name')
             audio_tracks = body.get('audio_tracks')
@@ -60,62 +56,46 @@ class SongConfigService:
                 song.audio_layout = serialize_audio_layout(layout)
                 await self._songs.save(song, ['audio_layout', 'update_time'])
             profile = await refresh_playback_mode(song)
-            result.data = song_item(song, profile)
-            result.msg = "更新成功"
-        except DoesNotExist:
-            result.code = 1
-            result.msg = "歌曲不存在"
-        except Exception as exc:
-            fail_result(result, exc, "更新歌曲失败")
-        return result
+            return ApiResult(data=song_item(song, profile), msg='更新成功')
+
+        return await run_guarded('更新歌曲失败', action, not_found_msg='歌曲不存在')
 
     async def detect_playback(self, song_id: int) -> ApiResult:
-        result = ApiResult()
-        try:
+        async def action():
             song = await self._songs.get(song_id)
             if not has_full_override(song.display_name)[0]:
                 await probe_and_save_layout(song, assigned_by='auto')
             profile = await refresh_playback_mode(song)
-            result.data = playback_detail(song, profile)
+            data = playback_detail(song, profile)
             if profile_needs_prepare(song, profile):
                 prep = await self._prepare.schedule(song_id)
-                result.data = {**result.data, 'prepare': prep}
-            result.msg = "播放能力检测完成"
-        except DoesNotExist:
-            result.code = 1
-            result.msg = "歌曲不存在"
-        except Exception as exc:
-            fail_result(result, exc, "检测播放能力失败")
-        return result
+                data = {**data, 'prepare': prep}
+            return ApiResult(data=data, msg='播放能力检测完成')
+
+        return await run_guarded('检测播放能力失败', action, not_found_msg='歌曲不存在')
 
     async def request_prepare(self, song_id: int, wait: bool = False) -> ApiResult:
-        result = ApiResult()
-        try:
+        async def action():
             song = await self._songs.get(song_id)
             if has_full_override(song.display_name)[0]:
                 profile = resolve(song)
-                result.data = playback_detail(song, profile)
-                result.msg = "已有 __override__ 三件套，无需预生成内嵌缓存"
-                return result
+                return ApiResult(
+                    data=playback_detail(song, profile),
+                    msg='已有 __override__ 三件套，无需预生成内嵌缓存',
+                )
             prep = await self._prepare.schedule(song_id)
             if wait:
                 prep = await self._prepare.wait_until_ready(song_id)
             profile = await refresh_playback_mode(song)
-            result.data = {
+            data = {
                 **playback_detail(song, profile),
                 'prepare': prep,
                 'cache_ready': prep.get('ready', False),
             }
             if prep.get('ready'):
-                result.msg = "缓存已就绪"
-            elif prep.get('status') in ('pending', 'running'):
-                result.msg = "正在后台生成缓存"
-            else:
-                result.code = 1
-                result.msg = prep.get('error') or "缓存生成失败"
-        except DoesNotExist:
-            result.code = 1
-            result.msg = "歌曲不存在"
-        except Exception as exc:
-            fail_result(result, exc, "预生成缓存失败")
-        return result
+                return ApiResult(data=data, msg='缓存已就绪')
+            if prep.get('status') in ('pending', 'running'):
+                return ApiResult(data=data, msg='正在后台生成缓存')
+            return ApiResult.fail(prep.get('error') or '缓存生成失败', data=data)
+
+        return await run_guarded('预生成缓存失败', action, not_found_msg='歌曲不存在')
