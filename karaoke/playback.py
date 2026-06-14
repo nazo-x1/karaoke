@@ -99,15 +99,15 @@ def resolve(song: Song, prepare_embedded: bool = False) -> PlaybackProfile:
             has_override_accompaniment=has_accompaniment,
         )
 
-    # 3. plain
+    # 3. plain（列表/点歌不做 ffprobe，实际流媒体再按需处理）
     if song.is_playable and has_source:
-        mime, ext = _video_meta(song.source_path)
+        ext = file_ext(song.source_path)
         return PlaybackProfile(
             mode='plain',
             playback_source='plain',
             can_queue=True,
             video_path=song.source_path,
-            video_mime=mime,
+            video_mime=video_mime_for_ext(ext),
             video_ext=ext,
             has_source=True,
             has_override_video=has_video,
