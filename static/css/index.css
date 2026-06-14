@@ -40,7 +40,7 @@ body {
     background-color: gainsboro;
 }
 
-table {
+.container table {
     width: 100%;
     margin-left: 9px;
     table-layout: fixed;
@@ -49,16 +49,16 @@ table {
     border-collapse: collapse;
     border: 0;
 }
-tbody>tr {height: 2rem;}
-tbody>tr:hover {background-color: #E2E0E0FF;}
+.container tbody>tr {height: 2rem;}
+.container tbody>tr:hover {background-color: #E2E0E0FF;}
 
-tr>td {
+.container tr>td {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-td>a {
+.container td>a {
     cursor: pointer;
     margin-left: 3px;
     margin-right: 9px;

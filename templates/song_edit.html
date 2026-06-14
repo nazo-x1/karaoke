@@ -4,21 +4,46 @@
     <meta charset="UTF-8">
     <title>编辑歌曲</title>
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
-    <link rel="stylesheet" href="/static/css/index.css">
     <link rel="stylesheet" href="/static/css/toast.style.css">
     <script type="text/javascript" src="/static/js/jq.min.js"></script>
     <script type="text/javascript" src="/static/js/toast.script.js"></script>
     <style>
-        .edit-form { max-width: 720px; margin: 2rem auto; padding: 1rem; }
+        body {
+            display: block;
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+        .edit-form { max-width: 720px; margin: 2rem auto; padding: 1rem 1.25rem 2rem; }
         .edit-form label { display: block; margin-top: 1rem; font-weight: bold; }
         .edit-form input[readonly] { background: #f5f5f5; width: 100%; padding: .5rem; box-sizing: border-box; }
         .edit-form input[type=text] { width: 100%; padding: .5rem; box-sizing: border-box; }
         .meta { color: #555; margin-top: .5rem; line-height: 1.6; }
-        .actions { margin-top: 1.5rem; display: flex; gap: .75rem; flex-wrap: wrap; }
-        .hint { font-size: .9rem; color: #666; margin-top: 1rem; padding: .75rem; background: #fafafa; border-radius: 4px; }
-        .track-table { width: 100%; border-collapse: collapse; margin-top: .5rem; font-size: .9rem; }
-        .track-table th, .track-table td { border: 1px solid #ddd; padding: .4rem .5rem; text-align: left; }
-        .track-table select { width: 100%; }
+        .actions { margin-top: 1.5rem; display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
+        .actions a { color: #1565c0; }
+        .hint { font-size: .9rem; color: #666; margin-top: .75rem; padding: .75rem; background: #fafafa; border-radius: 4px; line-height: 1.5; }
+        .track-section { margin-top: .5rem; }
+        .track-section > label { margin-top: 0; }
+        .track-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: .75rem;
+            font-size: .9rem;
+            position: static;
+            table-layout: auto;
+        }
+        .track-table th, .track-table td {
+            border: 1px solid #ddd;
+            padding: .45rem .55rem;
+            text-align: left;
+            vertical-align: middle;
+            white-space: normal;
+            word-break: break-word;
+        }
+        .track-table th { background: #f5f5f5; font-weight: 600; }
+        .track-table tbody tr:hover { background: #f9f9f9; }
+        .track-table select { width: 100%; min-width: 8rem; box-sizing: border-box; }
+        #no-tracks { color: #888; margin-top: .75rem; }
     </style>
 </head>
 <body>
@@ -31,16 +56,18 @@
     <div class="meta" id="song-meta"></div>
 
     <label>内嵌音轨映射</label>
-    <div class="hint" style="margin-top:0;">
-        <strong>__override__ 三件套齐全时始终优先</strong>，下方内嵌配置仅在无完整 override 时生效。
+    <div class="track-section">
+        <div class="hint" style="margin-top:0;">
+            <strong>__override__ 三件套齐全时始终优先</strong>，下方内嵌配置仅在无完整 override 时生效。
+        </div>
+        <table class="track-table" id="track-table" style="display:none;">
+            <thead>
+                <tr><th>#</th><th>标题</th><th>语言</th><th>编码</th><th>角色</th></tr>
+            </thead>
+            <tbody id="track-body"></tbody>
+        </table>
+        <div id="no-tracks">暂无音轨信息，请点击「检测播放能力」</div>
     </div>
-    <table class="track-table" id="track-table" style="display:none;">
-        <thead>
-            <tr><th>#</th><th>标题</th><th>语言</th><th>编码</th><th>角色</th></tr>
-        </thead>
-        <tbody id="track-body"></tbody>
-    </table>
-    <div id="no-tracks" style="color:#888; margin-top:.5rem;">暂无音轨信息，请点击「检测播放能力」</div>
 
     <div class="hint">
         增强覆写目录 <code>/KTV/__override__/</code>：<br>
