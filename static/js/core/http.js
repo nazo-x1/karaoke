@@ -37,10 +37,19 @@ window.KTV = window.KTV || {};
             if (body === undefined) {
                 return request('POST', path, { data: null, contentType: contentType });
             }
+            if (body && typeof body === 'object' && !(body instanceof FormData)) {
+                var ct = contentType || 'application/json';
+                if (ct.indexOf('application/json') >= 0) {
+                    return request('POST', path, {
+                        data: JSON.stringify(body),
+                        contentType: 'application/json',
+                        processData: false,
+                    });
+                }
+            }
             return request('POST', path, {
                 data: body,
-                contentType: contentType || (body && typeof body === 'object' && !(body instanceof FormData)
-                    ? 'application/json' : undefined),
+                contentType: contentType,
                 processData: !(body instanceof FormData) && typeof body === 'object',
             });
         },
