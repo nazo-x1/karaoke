@@ -91,7 +91,7 @@ document.getElementById("search-text").addEventListener('input', () =>{
                         const link = item.can_queue
                             ? `<a onclick="sing_song(${item.id})">点歌</a>`
                             : `<span style="color:#999">不可用</span>`;
-                        s = s + `<div class="song-list"><div>${item.display_name || item.name}</div>${link}</div>`;
+                        s = s + `<div class="song-list"><div>${item.display_name}</div>${link}</div>`;
                     });
                     document.getElementsByClassName("song-container")[0].innerHTML = s;
                 }

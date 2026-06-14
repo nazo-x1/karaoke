@@ -336,16 +336,6 @@ def resolve_browser_video_path(source_path: str) -> Tuple[str, str]:
     return source_path, video_mime_for_ext(ext)
 
 
-def predict_stream_mime(source_path: str) -> str:
-    if not os.path.isfile(source_path):
-        return video_mime_for_ext(file_ext(source_path))
-    if can_play_directly(source_path):
-        return video_mime_for_ext(file_ext(source_path))
-    return 'video/mp4'
-
-
-# --- 内嵌音轨探测 ---
-
 @dataclass
 class AudioTrackInfo:
     index: int

@@ -4,13 +4,11 @@
 
 import os
 import socket
-import traceback
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from tortoise.contrib.fastapi import register_tortoise
 import settings
-from karaoke.results import Result
 import karaoke.urls as my_urls
 
 
@@ -51,11 +49,10 @@ async def song_edit_page(request: Request, song_id: int):
 
 @app.get(prefix + "/sing")
 async def play(request: Request):
-    platform = request.query_params.get('type', None)
     return templates.TemplateResponse(
         request=request,
         name="playing.html",
-        context={"request": request, "prefix": prefix, "platform": platform},
+        context={"request": request, "prefix": prefix},
     )
 
 

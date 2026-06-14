@@ -119,21 +119,6 @@ document.getElementById("detect-playback-btn").addEventListener("click", () => {
     });
 });
 
-document.getElementById("detect-btn").addEventListener("click", () => {
-    $.ajax({
-        type: "POST",
-        url: server + "/song/" + songId + "/detect-override",
-        success: function (data) {
-            if (data.code === 0) {
-                $.Toast(data.msg, "success");
-                loadSong();
-            } else {
-                $.Toast(data.msg, "error");
-            }
-        }
-    });
-});
-
 document.getElementById("prepare-btn").addEventListener("click", () => {
     $.Toast("正在生成缓存，请稍候…", "success");
     $.ajax({

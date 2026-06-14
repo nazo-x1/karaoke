@@ -206,7 +206,7 @@ function get_song_list(page = 1) {
                         ? `<a onclick="sing_song(${item.id})">点歌</a>`
                         : `<span style="color:#999">点歌</span>`;
                     s = s + `<tr>
-                        <td>${item.display_name || item.name}</td>
+                        <td>${item.display_name}</td>
                         <td>${originLabel(item.source_origin)}</td>
                         <td>${modeLabel(item.playback_mode)}</td>
                         <td>${statusLabel(item)}</td>

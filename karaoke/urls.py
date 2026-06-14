@@ -46,19 +46,19 @@ async def song_list(q: str = "", page: int = 1):
     return await views.get_list(q, page)
 
 
-@router.get("/delete/{file_id}", summary="删除歌曲")
-async def delete_song(file_id: int, delete_disk: bool = False):
-    return await views.delete_song(file_id, delete_disk=delete_disk)
+@router.get("/delete/{song_id}", summary="删除歌曲")
+async def delete_song(song_id: int, delete_disk: bool = False):
+    return await views.delete_song(song_id, delete_disk=delete_disk)
 
 
-@router.get("/deleteHistory/{file_id}", summary="删除点歌历史记录")
-async def delete_history(file_id: int):
-    return await views.delete_history(file_id)
+@router.get("/deleteHistory/{song_id}", summary="删除点歌历史记录")
+async def delete_history(song_id: int):
+    return await views.delete_history(song_id)
 
 
-@router.get("/sing/{file_id}", summary="点歌")
-async def song_sing(file_id: int):
-    return await views.sing_song(file_id)
+@router.get("/sing/{song_id}", summary="点歌")
+async def song_sing(song_id: int):
+    return await views.sing_song(song_id)
 
 
 @router.get("/singHistory/{query_type}", summary="点歌历史纪录列表")
@@ -66,19 +66,19 @@ async def history_list(query_type: str):
     return await views.history_list(query_type)
 
 
-@router.get("/setTop/{file_id}", summary="置顶")
-async def set_top(file_id: int):
-    return await views.set_top(file_id)
+@router.get("/setTop/{song_id}", summary="置顶")
+async def set_top(song_id: int):
+    return await views.set_top(song_id)
 
 
-@router.get("/setSinged/{file_id}", summary="设置已经播放过")
-async def set_singed(file_id: int):
-    return await views.set_singed(file_id)
+@router.get("/setSinged/{song_id}", summary="设置已经播放过")
+async def set_singed(song_id: int):
+    return await views.set_singed(song_id)
 
 
-@router.get("/setSinging/{file_id}", summary="设置正在播放")
-async def set_dinging(file_id: int):
-    return await views.set_singing(file_id)
+@router.get("/setSinging/{song_id}", summary="设置正在播放")
+async def set_singing(song_id: int):
+    return await views.set_singing(song_id)
 
 
 @router.get("/stream/{song_id}/{kind}", summary="流媒体")
@@ -117,11 +117,6 @@ async def send_event(code: int, data, request: Request):
 @router.get("/{song_id}/playback", summary="播放配置")
 async def song_playback(song_id: int):
     return await views.get_playback_profile(song_id)
-
-
-@router.post("/{song_id}/detect-override", summary="检测覆写文件")
-async def detect_override(song_id: int):
-    return await views.detect_override(song_id)
 
 
 @router.post("/{song_id}/detect-playback", summary="检测播放能力")
