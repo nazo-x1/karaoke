@@ -6,6 +6,7 @@ import os
 import socket
 import asyncio
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from tortoise.contrib.fastapi import register_tortoise
@@ -16,6 +17,12 @@ from karaoke.services.queue_service import QueueService
 
 prefix = ''
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],
+    allow_methods=['*'],
+    allow_headers=['*'],
+)
 register_tortoise(app=app, config=settings.TORTOISE_ORM)
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")

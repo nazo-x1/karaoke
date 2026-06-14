@@ -41,6 +41,7 @@ class SongRepository:
         await song.delete()
 
     async def list_page(self, q: str, page: int) -> tuple:
+        page = max(1, int(page))
         qs = Song.filter(display_name__contains=q) if q else Song.all()
         total_num = await qs.count()
         songs = await qs.order_by('-id').offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)

@@ -144,8 +144,8 @@ class LibraryService:
             songs, total_num = await self._songs.list_page(q, page)
             result.data = [song_item(s) for s in songs]
             result.page = page
-            result.total = len(result.data)
-            result.totalPage = (total_num + PAGE_SIZE - 1) // PAGE_SIZE
+            result.total = total_num
+            result.totalPage = (total_num + PAGE_SIZE - 1) // PAGE_SIZE if total_num else 0
         except Exception:
             logger.error(traceback.format_exc())
             result.code = 1

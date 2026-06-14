@@ -11,9 +11,14 @@ DATABASE_FILE = os.path.join(FILE_PATH, 'sqlite3.db')
 
 # song 表缺失时追加的列：(列名, SQL 类型)
 SONG_ADDITIVE_COLUMNS = (
-    ('audio_layout', 'TEXT'),
+    ('source_rel', 'VARCHAR(512)'),
+    ('media_kind', 'VARCHAR(16)'),
+    ('playback_mode', 'VARCHAR(16)'),
     ('playback_source', 'VARCHAR(16)'),
     ('can_queue', 'INT'),
+    ('is_playable', 'INT'),
+    ('scan_root', 'VARCHAR(1024)'),
+    ('audio_layout', 'TEXT'),
 )
 
 

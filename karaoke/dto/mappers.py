@@ -14,6 +14,8 @@ from karaoke.domain.queue_policy import queue_state_label
 
 
 def fmt_time(dt) -> str:
+    if not dt:
+        return ''
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
