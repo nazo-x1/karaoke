@@ -25,16 +25,50 @@ window.KTV = window.KTV || {};
         waitUntilReady: async function (songId) {
             var prep = (await KTV.playback.ensureReady(songId)).data;
             if (prep.ready) return prep;
-            var deadline = Date.now() + 3600000;
-            while (Date.now() < deadline) {
-                if (prep.ready) return prep;
-                if (prep.status === 'failed') {
-                    throw new Error(prep.error || '播放资源准备失败');
+
+            return new Promise(function (resolve, reject) {
+                var done = false;
+                var deadline = Date.now() + 3600000;
+
+                function finish(err, data) {
+                    if (done) return;
+                    done = true;
+                    if (err) reject(err);
+                    else resolve(data);
                 }
-                await new Promise(function (r) { setTimeout(r, 1500); });
-                prep = (await KTV.playback.prepareStatus(songId)).data;
-            }
-            throw new Error('等待播放资源超时');
+
+                function checkStatus() {
+                    return KTV.playback.prepareStatus(songId).then(function (res) {
+                        var p = res.data;
+                        if (p.ready) {
+                            finish(null, p);
+                            return true;
+                        }
+                        if (p.status === 'failed') {
+                            finish(new Error(p.error || '播放资源准备失败'));
+                            return true;
+                        }
+                        return false;
+                    });
+                }
+
+                if (KTV.events && KTV.events.connect) {
+                    KTV.events.connect();
+                    KTV.events.on(9, function (message) {
+                        if (String(message.data) !== String(songId)) return;
+                        checkStatus();
+                    });
+                }
+
+                (async function pollFallback() {
+                    while (!done && Date.now() < deadline) {
+                        var finished = await checkStatus();
+                        if (finished || done) return;
+                        await new Promise(function (r) { setTimeout(r, 5000); });
+                    }
+                    if (!done) finish(new Error('等待播放资源超时'));
+                })();
+            });
         },
     };
 })(window.KTV);

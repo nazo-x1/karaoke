@@ -6,12 +6,13 @@ import traceback
 
 from tortoise.exceptions import DoesNotExist
 
-from karaoke.domain.playback import refresh_playback_mode
+from karaoke.domain.playback import persist_playback_mode, resolve
+from karaoke.domain.prepare_policy import profile_needs_prepare
+from karaoke.domain.queue_policy import QueueState
 from karaoke.dto.mappers import history_item
 from karaoke.events.bus import event_bus
 from karaoke.infra.repositories.history_repo import HistoryRepository
 from karaoke.infra.repositories.song_repo import SongRepository
-from karaoke.media import can_play_directly
 from karaoke.results import Result
 from karaoke.services.prepare_service import PrepareService
 from settings import logger
@@ -41,7 +42,7 @@ class QueueService:
         result = Result()
         try:
             song = await self._songs.get(song_id)
-            profile = await refresh_playback_mode(song)
+            profile = resolve(song)
             if not profile.can_queue:
                 result.code = 1
                 if not song.is_playable or not os.path.isfile(song.source_path):
@@ -52,21 +53,21 @@ class QueueService:
 
             history = await self._histories.get_optional(song.id)
             if history:
-                if history.is_sing == 1:
-                    history.is_sing = 0
+                if history.is_sing == QueueState.SUNG:
+                    history.is_sing = QueueState.PENDING
                     history.is_top = 0
                     await self._histories.save(history, ['is_sing', 'is_top', 'update_time'])
             else:
                 await self._histories.create(
-                    id=song.id, name=song.display_name, is_sing=0, is_top=0
+                    id=song.id, name=song.display_name,
+                    is_sing=QueueState.PENDING, is_top=0,
                 )
 
             prep = None
-            if profile.playback_source == 'embedded' and not profile.embedded_cache_ready:
+            if profile_needs_prepare(song, profile):
                 prep = await self._prepare.schedule(song.id)
-            elif profile.mode == 'plain' and profile.video_path:
-                if not can_play_directly(profile.video_path):
-                    prep = await self._prepare.schedule(song.id)
+
+            await persist_playback_mode(song, profile)
 
             await event_bus.publish_queue_changed()
             result.msg = f"{song.display_name} 点歌成功"
@@ -123,6 +124,11 @@ class QueueService:
             result.code = 1
             result.msg = "系统错误"
         return result
+
+    async def remove_if_exists(self, song_id: int) -> None:
+        history = await self._histories.get_optional(song_id)
+        if history:
+            await self._histories.delete(history)
 
     async def remove(self, song_id: int) -> Result:
         result = Result()

@@ -29,7 +29,7 @@ class History(Model):
     id = fields.IntField(pk=True)  # 与 Song.id 一致
     name = fields.CharField(max_length=256)
     times = fields.IntField(default=0)
-    is_sing = fields.IntField(default=0)  # 0 待播 | 1 已唱 | -1 正在唱
+    is_sing = fields.IntField(default=0)  # QueueState: 0 待播 | 1 已唱 | -1 正在唱
     is_top = fields.IntField(default=0)
     create_time = fields.DatetimeField(auto_now_add=True)
     update_time = fields.DatetimeField(auto_now=True, index=True)

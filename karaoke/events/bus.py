@@ -10,6 +10,9 @@ from typing import List
 
 from settings import logger
 
+CLIENT_QUEUE_MAXSIZE = 64
+HEARTBEAT_INTERVAL = 30.0
+
 
 class EventCode(IntEnum):
     PLAYBACK_CONTROL = 1
@@ -28,7 +31,7 @@ class EventBus:
         self._clients: List[asyncio.Queue] = []
 
     def subscribe(self) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=CLIENT_QUEUE_MAXSIZE)
         self._clients.append(queue)
         return queue
 
@@ -45,7 +48,12 @@ class EventBus:
         message = json.dumps(payload, ensure_ascii=False)
         for client in self._clients[:]:
             try:
-                await client.put(message)
+                while client.full():
+                    try:
+                        client.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                client.put_nowait(message)
             except Exception:
                 logger.error(traceback.format_exc())
 

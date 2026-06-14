@@ -95,7 +95,7 @@ getSingList = async () => {
 showTips = () => {
     let playinText = "暂未开始播放";
     if (singsList.length > 0) {
-        if (singsList[0].is_sing === -1) {
+        if (KTV.queue.isPlaying(singsList[0])) {
             playinText = "当前播放：" + singsList[0].name;
             if (singsList.length > 1) {
                 playinText = playinText + "，下一首：" + singsList[1].name;

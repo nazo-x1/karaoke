@@ -8,7 +8,8 @@ import traceback
 from tortoise.exceptions import DoesNotExist
 from fastapi import Request
 
-from karaoke.domain.playback import refresh_playback_mode, resolve, stream_media_for_kind
+from karaoke.domain.playback import persist_playback_mode, resolve, stream_media_for_kind
+from karaoke.domain.queue_policy import QueueState
 from karaoke.dto.mappers import playback_api
 from karaoke.events.bus import event_bus
 from karaoke.infra.repositories.history_repo import HistoryRepository
@@ -34,7 +35,7 @@ class PlaybackService:
         result = Result()
         try:
             song = await self._songs.get(song_id)
-            profile = await refresh_playback_mode(song)
+            profile = resolve(song)
             prep = await self._prepare.status(song_id)
             result.data = playback_api(song, profile, prep)
         except DoesNotExist:
@@ -50,8 +51,9 @@ class PlaybackService:
         result = Result()
         try:
             song = await self._songs.get(song_id)
-            await refresh_playback_mode(song)
+            profile = resolve(song)
             prep = await self._prepare.ensure_ready(song_id)
+            await persist_playback_mode(song, resolve(song))
             result.data = prep
             if prep.get('ready'):
                 result.msg = "播放资源已就绪"
@@ -108,10 +110,11 @@ class PlaybackService:
         result = Result()
         try:
             history = await self._histories.get(song_id)
-            history.is_sing = -1
+            history.is_sing = QueueState.SINGING
             history.is_top = 0
             await self._histories.save(history, ['is_sing', 'is_top', 'update_time'])
             result.msg = f"{history.name} 设置-1成功"
+            await event_bus.publish_queue_changed()
         except Exception:
             logger.error(traceback.format_exc())
             result.code = 1
@@ -122,7 +125,7 @@ class PlaybackService:
         result = Result()
         try:
             history = await self._histories.get(song_id)
-            history.is_sing = 1
+            history.is_sing = QueueState.SUNG
             history.is_top = 0
             history.times += 1
             await self._histories.save(history, ['is_sing', 'is_top', 'times', 'update_time'])

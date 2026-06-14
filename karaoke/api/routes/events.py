@@ -1,9 +1,10 @@
+import asyncio
 import traceback
 
 from fastapi import Request, Body
 from sse_starlette import EventSourceResponse
 
-from karaoke.events.bus import event_bus
+from karaoke.events.bus import HEARTBEAT_INTERVAL, event_bus
 from karaoke.services.playback_service import PlaybackService
 from settings import logger
 
@@ -18,8 +19,13 @@ async def sse_events(request: Request):
             while True:
                 if await request.is_disconnected():
                     break
-                message = await client_queue.get()
-                yield message
+                try:
+                    message = await asyncio.wait_for(
+                        client_queue.get(), timeout=HEARTBEAT_INTERVAL
+                    )
+                    yield {'data': message}
+                except asyncio.TimeoutError:
+                    yield {'comment': 'heartbeat'}
         except Exception:
             logger.error(traceback.format_exc())
         finally:

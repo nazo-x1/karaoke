@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from tortoise.exceptions import DoesNotExist
 
-from karaoke.domain.queue_policy import sort_pending
+from karaoke.domain.queue_policy import QueueState, sort_pending
 from karaoke.models import History
 
 
@@ -32,16 +32,16 @@ class HistoryRepository:
         return await History.filter(id=song_id)
 
     async def list_pending(self) -> List[History]:
-        rows = await History.filter(is_sing__in=[-1, 0])
+        rows = await History.filter(is_sing__in=[QueueState.SINGING, QueueState.PENDING])
         return sort_pending(rows)
 
     async def list_history(self, limit: int = 200) -> List[History]:
-        return await History.filter(is_sing=1).order_by('-update_time').limit(limit)
+        return await History.filter(is_sing=QueueState.SUNG).order_by('-update_time').limit(limit)
 
     async def list_usually(self, limit: int = 200) -> List[History]:
         return await History.all().order_by('-times').limit(limit)
 
     async def reset_stale_singing(self) -> None:
-        for h in await History.filter(is_sing=-1):
-            h.is_sing = 1
+        for h in await History.filter(is_sing=QueueState.SINGING):
+            h.is_sing = QueueState.SUNG
             await h.save(update_fields=['is_sing', 'update_time'])

@@ -119,8 +119,8 @@ def resolve(song: Song, prepare_embedded: bool = False) -> PlaybackProfile:
     )
 
 
-async def refresh_playback_mode(song: Song) -> PlaybackProfile:
-    profile = resolve(song)
+async def persist_playback_mode(song: Song, profile: PlaybackProfile) -> None:
+    """将解析结果写回 Song（仅在导入/检测/prepare 完成等写场景调用）。"""
     mode = profile.mode if profile.mode != 'not_ready' else 'plain'
     fields = []
     if song.playback_mode != mode:
@@ -135,6 +135,12 @@ async def refresh_playback_mode(song: Song) -> PlaybackProfile:
     if fields:
         fields.append('update_time')
         await song.save(update_fields=fields)
+
+
+async def refresh_playback_mode(song: Song) -> PlaybackProfile:
+    """解析并持久化播放模式（写场景便捷方法）。"""
+    profile = resolve(song)
+    await persist_playback_mode(song, profile)
     return profile
 
 

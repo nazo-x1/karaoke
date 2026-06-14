@@ -15,6 +15,7 @@ from karaoke.embedded import probe_and_save_layout
 from karaoke.infra.repositories.song_repo import SongRepository
 from karaoke.results import Result
 from karaoke.scanner import scan_root
+from karaoke.services.queue_service import QueueService
 from karaoke.media import file_ext, probe_video_playable
 from settings import (
     logger,
@@ -37,8 +38,13 @@ def _stem(filename: str) -> str:
 
 
 class LibraryService:
-    def __init__(self, songs: Optional[SongRepository] = None) -> None:
+    def __init__(
+        self,
+        songs: Optional[SongRepository] = None,
+        queue: Optional[QueueService] = None,
+    ) -> None:
         self._songs = songs or SongRepository()
+        self._queue = queue or QueueService()
 
     async def upload_file(self, query: Request) -> Result:
         result = Result()
@@ -152,11 +158,7 @@ class LibraryService:
             song = await self._songs.get(song_id)
             if delete_disk and song.source_origin == 'upload' and os.path.isfile(song.source_path):
                 os.remove(song.source_path)
-            from karaoke.infra.repositories.history_repo import HistoryRepository
-            history_repo = HistoryRepository()
-            history = await history_repo.get_optional(song_id)
-            if history:
-                await history_repo.delete(history)
+            await self._queue.remove_if_exists(song_id)
             name = song.display_name
             await self._songs.delete(song)
             result.msg = f"{name} 删除成功"

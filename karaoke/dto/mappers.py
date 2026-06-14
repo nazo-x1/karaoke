@@ -10,6 +10,7 @@ from karaoke.domain.playback import (
     list_meta_from_song,
     override_file_status,
 )
+from karaoke.domain.queue_policy import queue_state_label
 
 
 def fmt_time(dt) -> str:
@@ -86,7 +87,7 @@ def history_item(history, song: Optional[Song] = None) -> dict:
         'id': history.id,
         'name': history.name,
         'times': history.times,
-        'is_sing': history.is_sing,
+        'state': queue_state_label(history.is_sing),
         'is_top': history.is_top,
         'playback_mode': song.playback_mode if song else 'plain',
     }

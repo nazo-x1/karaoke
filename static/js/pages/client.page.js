@@ -44,7 +44,7 @@ function updateEnhancedControlsFromQueue(data) {
         setEnhancedControlsVisible(false);
         return;
     }
-    const playing = data.data.find(item => item.is_sing === -1) || data.data[0];
+    const playing = data.data.find(item => KTV.queue.isPlaying(item)) || data.data[0];
     currentPlaybackMode = playing.playback_mode === 'enhanced' ? 'enhanced' : 'plain';
     setEnhancedControlsVisible(currentPlaybackMode === 'enhanced');
 }
@@ -135,7 +135,7 @@ getSingList = () => {
     KTV.queue.pending().then(function (data) {
         updateEnhancedControlsFromQueue(data);
         if (data.total > 0) {
-            if (data.data[0].is_sing === -1) {
+            if (KTV.queue.isPlaying(data.data[0])) {
                 document.getElementsByClassName("current-song")[0].innerText = data.data[0].name;
                 startRotate();
                 if (data.data.length > 1) {

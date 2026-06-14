@@ -35,7 +35,7 @@ karaoke/
 | 配置 | `POST /songs/{id}/detect` | 检测播放能力 |
 | 配置 | `POST /songs/{id}/prepare` | 预生成内嵌缓存 |
 | 队列 | `POST /queue/songs/{id}` | 点歌 |
-| 队列 | `GET /queue` | 待播队列 |
+| 队列 | `GET /queue` | 待播队列（含 `state`: pending/playing/sung） |
 | 队列 | `GET /queue/history` | 已唱历史 |
 | 队列 | `GET /queue/usually` | 常点统计 |
 | 队列 | `POST /queue/songs/{id}/top` | 置顶 |
@@ -46,7 +46,7 @@ karaoke/
 | 播放 | `GET /playback/stream/{id}/{kind}` | 流媒体（video/vocals/accompaniment） |
 | 播放 | `POST /playback/session/singing/{id}` | 标记正在播放 |
 | 播放 | `POST /playback/session/finished/{id}` | 标记已唱完 |
-| 事件 | `GET /events` | SSE 订阅 |
+| 事件 | `GET /events` | SSE 订阅（30s 心跳保活） |
 | 事件 | `POST /events/command` | 遥控指令（JSON body: `{code, data}`） |
 
 ## 页面路由（HTML，非 API）

@@ -7,6 +7,7 @@ from tortoise.exceptions import DoesNotExist
 
 from karaoke.audio_layout import merge_manual_roles, parse_audio_layout, serialize_audio_layout
 from karaoke.domain.playback import has_full_override, refresh_playback_mode, resolve
+from karaoke.domain.prepare_policy import profile_needs_prepare
 from karaoke.dto.mappers import playback_detail, song_item
 from karaoke.embedded import probe_and_save_layout
 from karaoke.infra.repositories.history_repo import HistoryRepository
@@ -31,7 +32,7 @@ class SongConfigService:
         result = Result()
         try:
             song = await self._songs.get(song_id)
-            profile = await refresh_playback_mode(song)
+            profile = resolve(song)
             result.data = {
                 'id': song.id,
                 'display_name': song.display_name,
@@ -86,7 +87,7 @@ class SongConfigService:
                 await probe_and_save_layout(song, assigned_by='auto')
             profile = await refresh_playback_mode(song)
             result.data = playback_detail(song, profile)
-            if profile.playback_source == 'embedded' and not profile.embedded_cache_ready:
+            if profile_needs_prepare(song, profile):
                 prep = await self._prepare.schedule(song_id)
                 result.data = {**result.data, 'prepare': prep}
             result.msg = "播放能力检测完成"
