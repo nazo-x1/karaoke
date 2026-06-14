@@ -14,7 +14,12 @@ from fastapi import Request
 
 from karaoke.media import file_ext, probe_video_playable
 from karaoke.models import Song, History, SongList, HistoryList
-from karaoke.playback import refresh_playback_mode, resolve, stream_path_for_kind, override_triplet_paths
+from karaoke.playback import (
+    refresh_playback_mode,
+    resolve,
+    stream_media_for_kind,
+    override_triplet_paths,
+)
 from karaoke.results import Result
 from karaoke.responses import StreamResponse
 from karaoke.scanner import scan_root
@@ -274,6 +279,8 @@ async def get_playback_profile(song_id: int) -> Result:
             'display_name': song.display_name,
             'mode': profile.mode,
             'can_queue': profile.can_queue,
+            'video_mime': profile.video_mime,
+            'video_ext': profile.video_ext,
             'streams': {
                 'video': profile.video_path is not None,
                 'vocals': profile.vocals_path is not None,
@@ -560,13 +567,16 @@ async def stream_song(request: Request, song_id: int, kind: str):
         if kind not in ('video', 'vocals', 'accompaniment'):
             return Result(code=1, msg="无效的流类型")
         song = await Song.get(id=song_id)
-        file_path = stream_path_for_kind(song, kind)
+        if kind == 'video':
+            file_path, media_type = await asyncio.to_thread(stream_media_for_kind, song, kind)
+        else:
+            file_path, media_type = stream_media_for_kind(song, kind)
         if not file_path or not os.path.isfile(file_path):
             return Result(code=1, msg="文件不存在")
 
         file_size = os.path.getsize(file_path)
-        ext = file_ext(file_path)
-        media_type = CONTENT_TYPE.get(ext, 'application/octet-stream')
+        if not media_type:
+            media_type = CONTENT_TYPE.get(file_ext(file_path), 'application/octet-stream')
         range_header = request.headers.get('range')
         start = 0
         end = file_size - 1

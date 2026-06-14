@@ -32,6 +32,49 @@ function streamUrl(songId, kind) {
     return server + '/song/stream/' + songId + '/' + kind;
 }
 
+const VIDEO_MIME = {
+    mp4: 'video/mp4',
+    m4v: 'video/x-m4v',
+    webm: 'video/webm',
+    mkv: 'video/x-matroska',
+    avi: 'video/x-msvideo',
+    mov: 'video/quicktime',
+};
+
+function setVideoSource(url, mimeType) {
+    video.pause();
+    while (video.firstChild) {
+        video.removeChild(video.firstChild);
+    }
+    video.removeAttribute('src');
+    const source = document.createElement('source');
+    source.src = url;
+    if (mimeType) {
+        source.type = mimeType;
+    }
+    video.appendChild(source);
+    video.load();
+}
+
+function bindVideoReady(flag, onReady) {
+    const onCanPlay = () => {
+        videoReady = true;
+        if (flag) tryPlay();
+        if (onReady) onReady();
+    };
+    video.addEventListener('canplaythrough', onCanPlay, { once: true });
+    video.addEventListener('error', () => {
+        const code = video.error ? video.error.code : 0;
+        const hints = {
+            4: '视频格式或编码不受浏览器支持',
+            2: '网络错误，无法加载视频',
+            3: '视频解码失败',
+        };
+        $.Toast(hints[code] || '视频加载失败，请检查文件格式', 'error');
+        console.error('video error', video.error);
+    }, { once: true });
+}
+
 function setEnhancedControlsVisible(visible) {
     const display = visible ? '' : 'none';
     ['switchVocal', 'change-volume'].forEach(id => {
@@ -341,15 +384,14 @@ loadSing = async (flag = false) => {
     playbackMode = profile.mode === 'enhanced' ? 'enhanced' : 'plain';
     setEnhancedControlsVisible(playbackMode === 'enhanced');
 
+    const videoUrl = streamUrl(song.id, 'video');
+    const videoMime = profile.video_mime || VIDEO_MIME[profile.video_ext] || 'video/mp4';
+
     if (playbackMode === 'plain') {
         video.muted = false;
-        video.src = streamUrl(song.id, 'video');
-        video.load();
+        setVideoSource(videoUrl, videoMime);
         audioReady = true;
-        video.addEventListener('canplaythrough', () => {
-            videoReady = true;
-            if (flag) tryPlay();
-        }, { once: true });
+        bindVideoReady(flag);
         showTips();
         return;
     }
@@ -357,12 +399,8 @@ loadSing = async (flag = false) => {
     video.muted = true;
     initAudioContext();
     initAudioGraph();
-    video.src = streamUrl(song.id, 'video');
-    video.load();
-    video.addEventListener('canplaythrough', () => {
-        videoReady = true;
-        if (flag) tryPlay();
-    }, { once: true });
+    setVideoSource(videoUrl, videoMime);
+    bindVideoReady(flag);
 
     try {
         [vocalsBuffer, accompanimentBuffer] = await Promise.all([
@@ -442,7 +480,11 @@ nextSong = () => {
     getSingList(false);
     if (singsList.length < 1) {
         document.getElementById("playing-text").innerText = "当前没有待播放的歌曲，快去点歌吧 ~";
-        video.src = "";
+        while (video.firstChild) {
+            video.removeChild(video.firstChild);
+        }
+        video.removeAttribute('src');
+        video.load();
         resetPlaybackState();
         return;
     }

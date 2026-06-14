@@ -48,6 +48,8 @@ DEFAULT_DUPLICATE_POLICY = get_config("default_duplicate_policy") or "skip"
 
 os.makedirs(KEEP_PATH, exist_ok=True)
 os.makedirs(OVERRIDE_PATH, exist_ok=True)
+PLAY_CACHE_PATH = os.path.join(FILE_PATH, '__play_cache__')
+os.makedirs(PLAY_CACHE_PATH, exist_ok=True)
 
 TORTOISE_ORM = {
     "connections": {"default": f"sqlite://{FILE_PATH}/sqlite3.db"},

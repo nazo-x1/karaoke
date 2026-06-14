@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
+from karaoke.media import predict_stream_mime, resolve_browser_video_path, video_mime_for_ext, file_ext
 from karaoke.models import Song
 from settings import OVERRIDE_PATH
 
@@ -16,6 +17,8 @@ class PlaybackProfile:
     video_path: Optional[str] = None
     vocals_path: Optional[str] = None
     accompaniment_path: Optional[str] = None
+    video_mime: Optional[str] = None
+    video_ext: Optional[str] = None
     has_override_video: bool = False
     has_override_vocals: bool = False
     has_override_accompaniment: bool = False
@@ -31,6 +34,13 @@ def override_triplet_paths(display_name: str) -> dict:
     }
 
 
+def _video_meta(path: Optional[str]) -> tuple:
+    if not path:
+        return None, None
+    ext = file_ext(path)
+    return predict_stream_mime(path), ext
+
+
 def resolve(song: Song) -> PlaybackProfile:
     triplet = override_triplet_paths(song.display_name)
     has_video = os.path.isfile(triplet["video"])
@@ -39,12 +49,15 @@ def resolve(song: Song) -> PlaybackProfile:
     has_source = os.path.isfile(song.source_path)
 
     if has_video and has_vocals and has_accompaniment:
+        mime, ext = _video_meta(triplet["video"])
         return PlaybackProfile(
             mode='enhanced',
             can_queue=True,
             video_path=triplet["video"],
             vocals_path=triplet["vocals"],
             accompaniment_path=triplet["accompaniment"],
+            video_mime=mime or 'video/mp4',
+            video_ext=ext or 'mp4',
             has_override_video=True,
             has_override_vocals=True,
             has_override_accompaniment=True,
@@ -52,10 +65,13 @@ def resolve(song: Song) -> PlaybackProfile:
         )
 
     if song.is_playable and has_source:
+        mime, ext = _video_meta(song.source_path)
         return PlaybackProfile(
             mode='plain',
             can_queue=True,
             video_path=song.source_path,
+            video_mime=mime,
+            video_ext=ext,
             has_source=True,
             has_override_video=has_video,
             has_override_vocals=has_vocals,
@@ -90,3 +106,14 @@ def stream_path_for_kind(song: Song, kind: str) -> Optional[str]:
     if kind == 'accompaniment' and profile.accompaniment_path:
         return profile.accompaniment_path
     return None
+
+
+def stream_media_for_kind(song: Song, kind: str) -> tuple:
+    """返回 (文件路径, Content-Type)。"""
+    path = stream_path_for_kind(song, kind)
+    if not path:
+        return None, None
+    if kind == 'video':
+        return resolve_browser_video_path(path)
+    ext = file_ext(path)
+    return path, video_mime_for_ext(ext)

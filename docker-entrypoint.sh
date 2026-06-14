@@ -33,5 +33,5 @@ else
   echo "Database found, skipping initialization."
 fi
 
-mkdir -p /KTV/__keep__ /KTV/__override__
+mkdir -p /KTV/__keep__ /KTV/__override__ /KTV/__play_cache__
 exec "$@"

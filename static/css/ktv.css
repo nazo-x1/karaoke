@@ -21,10 +21,30 @@ body {
     position: absolute;
 }
 
-video {
+video, #myAudio {
     width: 100%;
     height: 100%;
     position: absolute;
+}
+
+#myAudio {
+    height: auto;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+}
+
+body.media-audio-mode .video-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+body.media-audio-mode #myAudio {
+    position: relative;
+    width: min(640px, 90%);
+    transform: none;
+    top: auto;
 }
 
 .setting {

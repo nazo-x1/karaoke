@@ -24,5 +24,5 @@ if [ ! -f "$DATABASE_FILE" ]; then
 else
   echo "Database file found. Skipping initialization."
 fi
-mkdir -p /KTV/__keep__ /KTV/__override__
+mkdir -p /KTV/__keep__ /KTV/__override__ /KTV/__play_cache__
 exec "$@"

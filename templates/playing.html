@@ -12,17 +12,11 @@
 </head>
 <body>
 <div class="top-tips"><div style="text-align: center;" id="playing-text"></div></div>
-<div class="video-container">
-    <video id="myVideo" controls preload="auto">
-        <source src="" type="video/mp4">
+<div class="video-container" id="media-container">
+    <video id="myVideo" controls preload="auto" playsinline>
         你的浏览器不支持视频标签。
     </video>
-    <audio style="display: none;" id="vocals" crossorigin="anonymous" preload="auto"></audio>
-    <audio style="display: none;" id="accompaniment" crossorigin="anonymous" preload="auto"></audio>
-    <audio style="display: none;" id="interruption" controls preload="auto">
-        <source src="" type="audio/mpeg">
-        你的浏览器不支持音频标签。
-    </audio>
+    <audio id="myAudio" controls preload="auto" style="display:none;"></audio>
 </div>
 <div class="setting">
     <div class="setting-img"><img id="expand-img" src="/static/img/expand.svg" alt="expand.svg"></div>
