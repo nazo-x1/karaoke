@@ -21,6 +21,10 @@ def get_config(key):
     return cfg.get('default', key, fallback=None)
 
 
+def get_config_section(section: str, key: str, fallback=None):
+    return cfg.get(section, key, fallback=fallback)
+
+
 FILE_PATH = get_config("path")
 if not os.path.exists(FILE_PATH):
     raise FileNotFoundError(FILE_PATH)

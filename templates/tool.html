@@ -11,7 +11,31 @@
 </head>
 <body>
 <div>
+    <div style="display: flex; flex-direction: column; justify-content: flex-start; align-items: center; margin-bottom: 2rem; border-bottom: 1px solid #ccc; padding-bottom: 2rem;">
+        <h3>一键导入（推荐）</h3>
+        <p style="width: 50%;">上传 MV 或音频，自动完成转码、人声/伴奏分离（Sidecar）、生成无音轨 MP4，可下载三件套或导入曲库。</p>
+        <div style="margin: 10px 0;">
+            <input id="pipeline-input" type="file" accept="video/*,audio/*" style="display: none;">
+            <input id="pipeline-song-name" type="text" placeholder="歌曲名（可选，默认取文件名）" style="width: 300px;">
+            <a href="#" id="pipeline-upload" style="text-decoration: none; margin-left: 8px;">选择文件并处理</a>
+        </div>
+        <div id="pipeline-status" style="width: 50%; margin: 8px 0;"></div>
+        <div id="pipeline-downloads" style="width: 50%;"></div>
+        <a href="#" id="pipeline-import" style="display:none; margin-top: 8px;">导入曲库</a>
+    </div>
+    <div style="display: flex; flex-direction: column; justify-content: flex-start; align-items: center; margin-bottom: 2rem; border-bottom: 1px solid #ccc; padding-bottom: 2rem;">
+        <h3>批量扫描导入</h3>
+        <p style="width: 50%;">扫描目录（Docker 默认 /import），按博客命名规范识别歌曲。可先预览再导入。</p>
+        <input id="import-path" type="text" value="/import" style="width: 300px;" placeholder="扫描路径">
+        <label><input type="checkbox" id="import-auto-separate"> 仅 MP4 时自动分离</label>
+        <label><input type="checkbox" id="import-skip-incomplete"> 三件套不齐则跳过</label>
+        <select id="import-dup-policy"><option value="skip">同名跳过</option><option value="overwrite">同名覆盖</option></select>
+        <a href="#" id="import-dry-run" style="margin: 8px;">预览扫描</a>
+        <a href="#" id="import-run" style="margin: 8px;">执行导入</a>
+        <pre id="import-report" style="width: 80%; max-height: 200px; overflow: auto; background: #f5f5f5; padding: 8px;"></pre>
+    </div>
     <div style="display: flex; flex-direction: column; justify-content: flex-start; align-items: center;">
+        <h3>手动步骤（高级）</h3>
         <p style="width: 50%;">主要用于从视频中提取出音频。上传的视频文件处理完成后，请下载处理后的音频和视频，然后使用人声和伴奏分离软件对音频进行处理，得到处理后的人声音频和伴奏音频，修改文件名字后上传至系统。</p>
         <div style="margin: 10px 0;">
             <input id="file-input" type="file" accept=".mp4" style="display: none;">
@@ -254,6 +278,114 @@
             }
         })
     })
+    let pipelineJobId = null;
+
+    document.getElementById("pipeline-upload").addEventListener('click', (e) => {
+        e.preventDefault();
+        document.getElementById("pipeline-input").click();
+    });
+    document.getElementById("pipeline-input").addEventListener('change', function (event) {
+        let files = event.target.files;
+        if (!files || files.length < 1) return;
+        let form_data = new FormData();
+        appendUploadFile(form_data, files[0]);
+        let customName = document.getElementById("pipeline-song-name").value.trim();
+        if (customName) form_data.append("song_name", customName);
+        show_modal_cover();
+        $.ajax({
+            type: "POST",
+            url: server + "/song/pipeline",
+            data: form_data,
+            processData: false,
+            contentType: false,
+            success: function (data) {
+                close_modal_cover();
+                if (data.code !== 0) {
+                    $.Toast(data.msg, 'error');
+                    return;
+                }
+                pipelineJobId = data.data.job_id;
+                document.getElementById("pipeline-status").innerText = "处理中...";
+                pollPipeline(pipelineJobId);
+            }
+        });
+        event.target.value = '';
+    });
+
+    function pollPipeline(jobId) {
+        $.ajax({
+            type: "GET",
+            url: server + "/song/pipeline/" + jobId,
+            success: function (data) {
+                if (data.code !== 0) return;
+                const st = data.data;
+                document.getElementById("pipeline-status").innerText = st.status + " - " + (st.step || "");
+                if (st.status === 'done') {
+                    let html = "";
+                    for (const key in st.outputs) {
+                        const fn = st.outputs[key];
+                        html += `<div><a href="${server}/song/pipeline/${jobId}/download/${encodeURIComponent(fn)}" download="${fn}">${fn}</a></div>`;
+                    }
+                    document.getElementById("pipeline-downloads").innerHTML = html;
+                    document.getElementById("pipeline-import").style.display = "inline";
+                } else if (st.status === 'failed') {
+                    $.Toast(st.error || '处理失败', 'error');
+                } else {
+                    setTimeout(() => pollPipeline(jobId), 2000);
+                }
+            }
+        });
+    }
+
+    document.getElementById("pipeline-import").addEventListener('click', (e) => {
+        e.preventDefault();
+        if (!pipelineJobId) return;
+        $.ajax({
+            type: "POST",
+            url: server + "/song/pipeline/" + pipelineJobId + "/import",
+            success: function (data) {
+                if (data.code === 0) {
+                    $.Toast(data.msg, 'success');
+                } else {
+                    $.Toast(data.msg, 'error');
+                }
+            }
+        });
+    });
+
+    function runImportScan(dryRun) {
+        const body = {
+            local_path: document.getElementById("import-path").value,
+            dry_run: dryRun,
+            auto_separate: document.getElementById("import-auto-separate").checked,
+            skip_incomplete: document.getElementById("import-skip-incomplete").checked,
+            duplicate_policy: document.getElementById("import-dup-policy").value,
+        };
+        show_modal_cover();
+        $.ajax({
+            type: "POST",
+            url: server + "/song/import/scan",
+            contentType: "application/json",
+            data: JSON.stringify(body),
+            success: function (data) {
+                close_modal_cover();
+                if (data.code !== 0) {
+                    $.Toast(data.msg, 'error');
+                    return;
+                }
+                document.getElementById("import-report").innerText = JSON.stringify(data.data, null, 2);
+            }
+        });
+    }
+    document.getElementById("import-dry-run").addEventListener('click', (e) => {
+        e.preventDefault();
+        runImportScan(true);
+    });
+    document.getElementById("import-run").addEventListener('click', (e) => {
+        e.preventDefault();
+        runImportScan(false);
+    });
+
     function show_modal_cover() {
         $('.modal_cover')[0].style.display = 'flex';
         $('.modal_cover>.modal_gif')[0].style.display = 'flex';

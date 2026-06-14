@@ -6,6 +6,8 @@ from tortoise import fields
 from tortoise.models import Model
 from pydantic import BaseModel
 
+from karaoke.assets import get_song_assets
+
 
 class Files(Model):
     id = fields.IntField(pk=True, generated=True, description='主键')
@@ -37,16 +39,25 @@ class FileList(BaseModel):
     is_sing: int
     create_time: str
     update_time: str
+    has_video: bool = False
+    has_vocals: bool = False
+    has_accompaniment: bool = False
+    can_switch: bool = False
+    play_mode: str = 'none'
 
     class Config:
         orm_mode = True
         from_attributes = True
 
     @classmethod
-    def from_orm_format(cls, obj: Files):
+    def from_orm_format(cls, obj: Files, probe_embedded: bool = False):
         c = obj.create_time.strftime("%Y-%m-%d %H:%M:%S")
         m = obj.update_time.strftime("%Y-%m-%d %H:%M:%S")
-        return cls(id=obj.id, name=obj.name, is_sing=obj.is_sing, create_time=c, update_time=m)
+        assets = get_song_assets(obj.name, probe_embedded=probe_embedded)
+        return cls(
+            id=obj.id, name=obj.name, is_sing=obj.is_sing, create_time=c, update_time=m,
+            **assets,
+        )
 
 
 class HistoryList(BaseModel):
@@ -55,13 +66,20 @@ class HistoryList(BaseModel):
     times: int
     is_sing: int
     is_top: int
+    has_video: bool = False
+    has_vocals: bool = False
+    has_accompaniment: bool = False
+    can_switch: bool = False
+    play_mode: str = 'none'
 
     class Config:
         orm_mode = True
         from_attributes = True
 
-    # @classmethod
-    # def from_orm_format(cls, obj: History):
-    #     c = obj.create_time.strftime("%Y-%m-%d %H:%M:%S")
-    #     m = obj.update_time.strftime("%Y-%m-%d %H:%M:%S")
-    #     return cls(id=obj.id, name=obj.name, times=obj.times, create_time=c, update_time=m)
+    @classmethod
+    def from_history(cls, obj: History, probe_embedded: bool = False):
+        assets = get_song_assets(obj.name, probe_embedded=probe_embedded)
+        return cls(
+            id=obj.id, name=obj.name, times=obj.times, is_sing=obj.is_sing, is_top=obj.is_top,
+            **assets,
+        )

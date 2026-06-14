@@ -22,6 +22,8 @@ let isBindEvent = false;
 let isAutoPaused = false;
 let soundEffectBuffers = {};
 let sfxGain = null;
+let playMode = 'full';
+let canSwitch = false;
 
 localStorage.setItem('vocalsVolume', vocalsVolume.toString());
 localStorage.setItem('accompanimentVolume', accompanimentVolume.toString());
@@ -62,6 +64,10 @@ showTips = () => {
 }
 
 document.getElementById("switchVocal").addEventListener('click', () => {
+    if (!canSwitch) {
+        $.Toast("当前歌曲不支持原唱/伴奏切换", "error");
+        return;
+    }
     let switch_button = document.getElementById("switchVocal");
     if (switch_button.getElementsByTagName('span')[0].innerText === "原唱") {
         send_message(4, 1);
@@ -85,6 +91,7 @@ send_message = (code, data) => {
 }
 
 switchVocal = (flag) => {
+    if (!canSwitch) return;
     let switch_button = document.getElementById("switchVocal");
     if (flag === 'ON') {
         switch_button.getElementsByTagName('span')[0].innerText = "原唱"
@@ -283,6 +290,10 @@ loadSing = async (flag=false) => {
     getSingList(false);
     if (singsList.length < 1) {return;}
 
+    playMode = singsList[0].play_mode || 'full';
+    canSwitch = singsList[0].can_switch || false;
+    updateSwitchUI();
+
     initAudioContext();
     initAudioGraph();
 
@@ -290,28 +301,57 @@ loadSing = async (flag=false) => {
     let video_name = file_name + ".mp4";
     let vocals_name = file_name + "_vocals.mp3";
     let accompaniment_name = file_name + "_accompaniment.mp3";
-    video.src = server + '/download/' + video_name;
+    video.src = server + '/download/' + encodeURIComponent(video_name);
     video.load();
     videoReady = false;
     audioReady = false;
     isAudioPlaying = false;
+    video.muted = playMode !== 'embedded';
 
     video.addEventListener('canplaythrough', () => {videoReady = true; if (flag) tryPlay();}, { once: true });
-    try {
-        [vocalsBuffer, accompanimentBuffer] = await Promise.all([
-            loadAudioBuffer(server + '/download/' + vocals_name),
-            loadAudioBuffer(server + '/download/' + accompaniment_name)
-        ]);
-        audioReady = true;
-        if (flag) {
-            tryPlay();
+
+    if (playMode === 'full') {
+        try {
+            [vocalsBuffer, accompanimentBuffer] = await Promise.all([
+                loadAudioBuffer(server + '/download/' + encodeURIComponent(vocals_name)),
+                loadAudioBuffer(server + '/download/' + encodeURIComponent(accompaniment_name))
+            ]);
+            audioReady = true;
+            if (flag) tryPlay();
+        } catch (err) {
+            console.error("音频加载失败:", err);
+            $.Toast("音频加载失败", "error");
+            return;
         }
-    } catch (err) {
-        console.error("音频加载失败:", err);
-        $.Toast("音频加载失败", "error");
-        return;
+    } else if (playMode === 'embedded') {
+        vocalsBuffer = null;
+        accompanimentBuffer = null;
+        audioReady = true;
+        if (flag) tryPlay();
+    } else if (playMode === 'silent') {
+        vocalsBuffer = null;
+        accompanimentBuffer = null;
+        audioReady = true;
+        $.Toast("当前为无音轨 MV，仅画面播放", "error");
+        if (flag && videoReady) {
+            video.play().catch(() => {});
+        }
     }
     showTips();
+}
+
+function updateSwitchUI() {
+    const el = document.getElementById("switchVocal");
+    if (!el) return;
+    if (!canSwitch) {
+        el.style.filter = "grayscale(1)";
+        el.style.opacity = "0.5";
+        el.title = "当前歌曲无人声/伴奏分离文件";
+    } else {
+        el.style.filter = "grayscale(0)";
+        el.style.opacity = "1";
+        el.title = "";
+    }
 }
 
 function playAudio(offset = 0) {
@@ -358,6 +398,14 @@ function getAudioPosition() {
 }
 
 tryPlay = () => {
+    if (!videoReady || !audioReady) return;
+    if (playMode === 'embedded' || playMode === 'silent') {
+        video.play().catch(error => {
+            console.error("视频播放失败:", error);
+            $.Toast("第一次请手动点击播放按钮 ~", "error");
+        });
+        return;
+    }
     if (videoReady && audioReady) {
         video.play().then(() => {
             playAudio(0);

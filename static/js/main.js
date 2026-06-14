@@ -4,6 +4,7 @@ let vocalsVolume = localStorage.getItem("vocalsVolume")? parseFloat(localStorage
 let accompanimentVolume = localStorage.getItem("accompanimentVolume")? parseFloat(localStorage.getItem("accompanimentVolume")): 1;
 let isBindEvent = false;
 let searchTimeout = null;
+let canSwitchCurrent = false;
 const l_body = document.querySelector('.l_body');
 const sidebar = {
   leftbar: () => {
@@ -41,6 +42,9 @@ document.getElementById("rotate-img").addEventListener('click', () => {
 document.getElementById("re-sing").addEventListener('click', () => {send_message(2, 0);})
 document.getElementById("next-song").addEventListener('click', () => {send_message(3, 0);})
 document.getElementById("switchVocal").addEventListener('click', () => {
+    if (!canSwitchCurrent) {
+        return;
+    }
     let switch_button = document.getElementById("switchVocal");
     if (switch_button.getElementsByTagName('p')[0].innerText === "原唱") {
         send_message(4, 1);
@@ -122,6 +126,8 @@ getSingList = () => {
         success: function (data) {
             if (data.code === 0) {
                 if (data.total > 0) {
+                    canSwitchCurrent = data.data[0].can_switch || false;
+                    updateClientSwitchUI();
                     if (data.data[0].is_sing === -1) {
                         document.getElementsByClassName("current-song")[0].innerText = data.data[0].name;
                         startRotate();
@@ -136,6 +142,8 @@ getSingList = () => {
                         stopRotate();
                     }
                 } else {
+                    canSwitchCurrent = false;
+                    updateClientSwitchUI();
                     document.getElementsByClassName("current-song")[0].innerText = "暂未开始播放";
                     document.getElementsByClassName("next-song")[0].innerText = "暂无下一首歌曲";
                     stopRotate();
@@ -154,7 +162,20 @@ getSingList = () => {
     })
 }
 
+function updateClientSwitchUI() {
+    const el = document.getElementById("switchVocal");
+    if (!el) return;
+    if (!canSwitchCurrent) {
+        el.style.filter = "grayscale(1)";
+        el.style.opacity = "0.5";
+    } else {
+        el.style.filter = "grayscale(0)";
+        el.style.opacity = "1";
+    }
+}
+
 switchVocal = (flag) => {
+    if (!canSwitchCurrent) return;
     let switch_button = document.getElementById("switchVocal");
     if (flag === 'ON') {
         switch_button.getElementsByTagName('p')[0].innerText = "原唱"

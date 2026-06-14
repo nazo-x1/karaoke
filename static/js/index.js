@@ -89,6 +89,67 @@ document.getElementById("generate_code").addEventListener('click', () => {
     }
 })
 
+function songStatusLabel(item) {
+    if (item.can_switch) return '<span style="color:green">完整</span>';
+    if (item.play_mode === 'embedded') return '<span style="color:orange">仅MV</span>';
+    if (item.play_mode === 'silent') return '<span style="color:red">待补全</span>';
+    return '<span style="color:gray">无视频</span>';
+}
+
+function enrich_song(file_id) {
+    show_modal_cover();
+    $.ajax({
+        type: "POST",
+        url: server + "/song/enrich/song/" + file_id,
+        success: function (data) {
+            if (data.code !== 0) {
+                $.Toast(data.msg, "error");
+                close_modal_cover();
+                return;
+            }
+            pollEnrichJob(data.data.job_id);
+        },
+        error: function () {
+            close_modal_cover();
+            $.Toast("补全任务提交失败", "error");
+        }
+    });
+}
+
+function pollEnrichJob(jobId) {
+    $.ajax({
+        type: "GET",
+        url: server + "/song/pipeline/" + jobId,
+        success: function (data) {
+            if (data.code !== 0) {
+                close_modal_cover();
+                $.Toast(data.msg, "error");
+                return;
+            }
+            if (data.data.status === 'done') {
+                $.ajax({
+                    type: "POST",
+                    url: server + "/song/enrich/job/" + jobId + "/commit",
+                    success: function (res) {
+                        close_modal_cover();
+                        if (res.code === 0) {
+                            $.Toast(res.msg, "success");
+                            get_song_list();
+                        } else {
+                            $.Toast(res.msg, "error");
+                        }
+                    }
+                });
+            } else if (data.data.status === 'failed') {
+                close_modal_cover();
+                $.Toast(data.data.error || "补全失败", "error");
+            } else {
+                setTimeout(() => pollEnrichJob(jobId), 2000);
+            }
+        }
+    });
+}
+
 function get_song_list(page=1) {
     let q = document.getElementById("file-search").value;
     let params = "page=" + page;
@@ -106,8 +167,12 @@ function get_song_list(page=1) {
                     return;
                 }
                 data.data.forEach(item => {
-                    s = s + `<tr><td>${item.name}</td><td>${item.create_time}</td>
-                            <td><a onclick="sing_song(${item.id})">点歌</a><a onclick="delete_song(${item.id})">删除</a></td></tr>`;
+                    let enrichBtn = '';
+                    if (!item.can_switch && item.has_video) {
+                        enrichBtn = `<a onclick="enrich_song(${item.id})">补全音轨</a>`;
+                    }
+                    s = s + `<tr><td>${item.name} ${songStatusLabel(item)}</td><td>${item.create_time}</td>
+                            <td><a onclick="sing_song(${item.id})">点歌</a>${enrichBtn}<a onclick="delete_song(${item.id})">删除</a></td></tr>`;
                 })
                 PagingManage($('#paging'), data.totalPage, data.page);
                 document.getElementsByTagName("table")[0].style.display = "";

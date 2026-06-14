@@ -103,6 +103,42 @@ async def download_preprocess(file_name: str):
     return await views.download_preprocess_file(file_name)
 
 
+@router.post('/pipeline', summary="一键处理流水线")
+async def pipeline_create(query: Request):
+    return await views.create_pipeline(query)
+
+
+@router.get('/pipeline/{job_id}', summary="查询流水线任务")
+async def pipeline_status(job_id: str):
+    return await views.get_pipeline_status(job_id)
+
+
+@router.post('/pipeline/{job_id}/import', summary="流水线结果导入曲库")
+async def pipeline_import(job_id: str):
+    return await views.commit_pipeline(job_id)
+
+
+@router.get('/pipeline/{job_id}/download/{file_name}', summary="下载流水线产出")
+async def pipeline_download(job_id: str, file_name: str):
+    return await views.download_pipeline_file(job_id, file_name)
+
+
+@router.post('/enrich/song/{file_id}', summary="补全音轨")
+async def enrich_song(file_id: int):
+    return await views.enrich_song(file_id)
+
+
+@router.post('/enrich/job/{job_id}/commit', summary="补全结果写入曲库")
+async def enrich_commit(job_id: str):
+    return await views.commit_enrich(job_id)
+
+
+@router.post('/import/scan', summary="批量扫描导入")
+async def import_scan_route(request: Request):
+    body = await request.json()
+    return await views.import_scan(body)
+
+
 @router.get('/local/import', summary="从本地路径导入歌曲文件")
 async def import_local(local_path: str, query: Request):
     result = await views.import_local_file(local_path)
