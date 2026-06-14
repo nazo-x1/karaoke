@@ -25,6 +25,7 @@ _PREVIEW_LIMIT = 200
 _UPDATE_FIELDS = (
     'display_name', 'source_path', 'source_rel', 'source_origin',
     'is_playable', 'scan_root', 'media_kind', 'playback_mode',
+    'playback_source', 'can_queue',
 )
 
 
@@ -138,6 +139,9 @@ def _collect_scan(
                 song.is_playable = is_playable
                 song.scan_root = root
                 song.source_rel = source_rel or None
+                song.playback_mode = 'plain'
+                song.playback_source = 'plain'
+                song.can_queue = is_playable
                 to_update[song.id] = song
                 if dry_run:
                     _append_preview(stats, {'path': abs_path, 'action': 'update'})
@@ -165,6 +169,9 @@ def _collect_scan(
                     existing_same_name.is_playable = is_playable
                     existing_same_name.scan_root = root
                     existing_same_name.source_origin = 'scan'
+                    existing_same_name.playback_mode = 'plain'
+                    existing_same_name.playback_source = 'plain'
+                    existing_same_name.can_queue = is_playable
                     to_update[existing_same_name.id] = existing_same_name
                     existing_by_path[abs_path] = existing_same_name
                 stats.added += 1
@@ -192,6 +199,8 @@ def _collect_scan(
             source_rel=source_rel or None,
             media_kind='video',
             playback_mode='plain',
+            playback_source='plain',
+            can_queue=is_playable,
             is_playable=is_playable,
             scan_root=root,
         )

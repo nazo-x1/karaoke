@@ -10,6 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Request, Body
 from sse_starlette import EventSourceResponse
 import karaoke.views as views
+from karaoke.db_schema import ensure_schema
 from karaoke.results import Result
 from settings import logger
 
@@ -19,6 +20,7 @@ router = APIRouter(prefix='/song', tags=['歌曲'], responses={404: {'descriptio
 
 @router.on_event('startup')
 async def startup_event():
+    await asyncio.to_thread(ensure_schema)
     await views.init_history()
 
 

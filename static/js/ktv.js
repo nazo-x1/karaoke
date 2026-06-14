@@ -381,6 +381,11 @@ loadSing = async (flag = false) => {
         return;
     }
 
+    if (!profile.can_queue) {
+        $.Toast("当前歌曲不可播放", "error");
+        return;
+    }
+
     playbackMode = profile.mode === 'enhanced' ? 'enhanced' : 'plain';
     setEnhancedControlsVisible(playbackMode === 'enhanced');
 
@@ -466,17 +471,14 @@ tryPlay = () => {
 
 first_play = () => {
     if (singsList.length > 0) {
-        if (playbackMode === 'enhanced') initAudioContext();
-        if (!videoReady || !audioReady) {
-            loadSing(true);
-        } else {
-            tryPlay();
-        }
+        loadSing(true);
     }
 };
 
 nextSong = () => {
-    if (singsList.length > 0) { setSinged(false); }
+    if (singsList.length > 0) {
+        setSinged(false);
+    }
     getSingList(false);
     if (singsList.length < 1) {
         document.getElementById("playing-text").innerText = "当前没有待播放的歌曲，快去点歌吧 ~";
@@ -488,7 +490,6 @@ nextSong = () => {
         resetPlaybackState();
         return;
     }
-    singsList.shift();
     loadSing(true);
 };
 

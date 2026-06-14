@@ -13,6 +13,8 @@ class Song(Model):
     source_rel = fields.CharField(max_length=512, null=True)
     media_kind = fields.CharField(max_length=16, default='video')
     playback_mode = fields.CharField(max_length=16, default='plain')  # plain | enhanced
+    playback_source = fields.CharField(max_length=16, null=True)  # override | embedded | plain
+    can_queue = fields.BooleanField(null=True)
     is_playable = fields.BooleanField(default=False)
     scan_root = fields.CharField(max_length=1024, null=True)
     audio_layout = fields.TextField(null=True)

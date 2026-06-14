@@ -21,6 +21,7 @@ from karaoke.playback import (
     stream_media_for_kind,
     override_file_status,
     has_full_override,
+    list_meta_from_song,
 )
 from karaoke.results import Result
 from karaoke.responses import StreamResponse
@@ -57,14 +58,19 @@ def _effective_mode(song: Song, profile) -> str:
 
 
 def _song_item(song: Song, profile=None) -> dict:
-    profile = profile or resolve(song)
+    if profile is not None:
+        mode = _effective_mode(song, profile)
+        source = profile.playback_source
+        can_queue = profile.can_queue
+    else:
+        mode, source, can_queue = list_meta_from_song(song)
     return {
         'id': song.id,
         'display_name': song.display_name,
         'source_origin': song.source_origin,
-        'playback_mode': _effective_mode(song, profile),
-        'playback_source': profile.playback_source,
-        'can_queue': profile.can_queue,
+        'playback_mode': mode,
+        'playback_source': source,
+        'can_queue': can_queue,
         'is_playable': song.is_playable,
         'source_path': song.source_path,
         'create_time': _fmt_time(song.create_time),
@@ -145,25 +151,30 @@ async def _build_history_list(histories: List[History]) -> List[dict]:
     items = []
     for h in histories:
         song = song_map.get(h.id)
-        mode = resolve(song).mode if song else 'plain'
-        if song and mode == 'not_ready':
-            mode = song.playback_mode
         items.append({
             'id': h.id,
             'name': h.name,
             'times': h.times,
             'is_sing': h.is_sing,
             'is_top': h.is_top,
-            'playback_mode': mode,
+            'playback_mode': song.playback_mode if song else 'plain',
         })
     return items
 
 
 async def _pending_histories() -> List[History]:
-    singing = await History.filter(is_sing=-1)
-    topped = await History.filter(is_sing=0, is_top=1).order_by('-update_time')
-    waiting = await History.filter(is_sing=0, is_top=0).order_by('update_time')
-    return list(singing) + list(topped) + list(waiting)
+    rows = await History.filter(is_sing__in=[-1, 0])
+    if not rows:
+        return []
+
+    def _sort_key(h: History):
+        if h.is_sing == -1:
+            return (0, 0.0)
+        if h.is_top == 1:
+            return (1, -h.update_time.timestamp())
+        return (2, h.update_time.timestamp())
+
+    return sorted(rows, key=_sort_key)
 
 
 async def upload_file(query: Request) -> Result:
@@ -240,6 +251,8 @@ async def upload_file(query: Request) -> Result:
                 source_rel=None,
                 media_kind='video',
                 playback_mode='plain',
+                playback_source='plain',
+                can_queue=is_playable,
                 is_playable=is_playable,
             )
 
