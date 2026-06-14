@@ -28,14 +28,13 @@ karaoke/
 └── errors.py                  # 异常 → API 消息
 ```
 
-- Tortoise ORM 模型注册：`karaoke.infra.models`（根目录 `karaoke.models` 为兼容 re-export）
-
 ## 依赖规则
 
 - `api` → `services` → `domain` / `infra` / `events`
 - `domain` 不依赖 `services` / `api`
 - `infra` 不依赖 `services`
 - 统一响应：`services/*` 返回 `dto.ApiResult`（JSON 字段 `code/msg/data/total/page/totalPage`）
+- ORM 模型：`karaoke.infra.models`（Tortoise 注册路径）
 
 ## API（/api/v1）
 
@@ -81,9 +80,5 @@ static/js/
 ├── domains/       # library, config, queue, playback
 └── pages/         # index, client, playing, edit
 ```
-
-## 已废弃
-
-旧 REST API 路径 `/song/*`（如 `GET /song/sing/{id}`、`GET /song/list`）已移除。请统一使用 `/api/v1/*`。
 
 OpenAPI 文档：启动服务后访问 `/docs`。
