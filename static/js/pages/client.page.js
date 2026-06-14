@@ -4,6 +4,7 @@ let vocalsVolume = localStorage.getItem("vocalsVolume")? parseFloat(localStorage
 let accompanimentVolume = localStorage.getItem("accompanimentVolume")? parseFloat(localStorage.getItem("accompanimentVolume")): 1;
 let isBindEvent = false;
 let searchTimeout = null;
+let searchState = { page: 1, totalPage: 0, keyword: '', loading: false };
 let currentPlaybackMode = 'plain';
 const l_body = document.querySelector('.l_body');
 const sidebar = {
@@ -76,23 +77,61 @@ document.getElementById("guzhang").addEventListener('click', () => {send_message
 document.getElementById("huanhu").addEventListener('click', () => {send_message(7, 'huanhu');});
 document.getElementById("daxiao").addEventListener('click', () => {send_message(7, 'daxiao');});
 document.getElementById("xixu").addEventListener('click', () => {send_message(7, 'xixu');});
+function renderSearchSongItem(item) {
+    const link = item.can_queue
+        ? `<a onclick="sing_song(${item.id})">点歌</a>`
+        : `<span style="color:#999">不可用</span>`;
+    return `<div class="song-list"><div>${item.display_name}</div>${link}</div>`;
+}
+
+function loadSearchSongs(reset) {
+    if (searchState.loading) return;
+    const keyWord = document.getElementById("search-text").value.trim();
+    if (!keyWord) {
+        document.getElementsByClassName("song-container")[0].innerHTML = '';
+        searchState = { page: 1, totalPage: 0, keyword: '', loading: false };
+        return;
+    }
+    if (reset) {
+        searchState.page = 1;
+        searchState.totalPage = 0;
+        searchState.keyword = keyWord;
+        document.getElementsByClassName("song-container")[0].innerHTML = '';
+    } else if (searchState.page > searchState.totalPage && searchState.totalPage > 0) {
+        return;
+    }
+    const pageToLoad = searchState.page;
+    searchState.loading = true;
+    KTV.library.list(pageToLoad, keyWord).then(function (data) {
+        searchState.totalPage = data.totalPage || 0;
+        const container = document.getElementsByClassName("song-container")[0];
+        (data.data || []).forEach(function (item) {
+            container.insertAdjacentHTML('beforeend', renderSearchSongItem(item));
+        });
+        searchState.page = pageToLoad + 1;
+    }).catch(function (err) {
+        console.log(err.msg || err);
+    }).finally(function () {
+        searchState.loading = false;
+    });
+}
+
 document.getElementById("search-text").addEventListener('input', () =>{
     clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        let keyWord = document.getElementById("search-text").value;
-        if (keyWord === undefined || keyWord === '') {document.getElementsByClassName("song-container")[0].innerHTML = ''; return;}
-        KTV.library.list(1, keyWord).then(function (data) {
-            let s = "";
-            data.data.forEach(item => {
-                const link = item.can_queue
-                    ? `<a onclick="sing_song(${item.id})">点歌</a>`
-                    : `<span style="color:#999">不可用</span>`;
-                s = s + `<div class="song-list"><div>${item.display_name}</div>${link}</div>`;
-            });
-            document.getElementsByClassName("song-container")[0].innerHTML = s;
-        });
+    searchTimeout = setTimeout(function () {
+        loadSearchSongs(true);
     }, 500);
 });
+
+const searchScrollRoot = document.querySelector('.l_left .leftbar-container');
+if (searchScrollRoot) {
+    searchScrollRoot.addEventListener('scroll', function () {
+        if (!searchState.keyword || searchState.loading) return;
+        if (searchScrollRoot.scrollTop + searchScrollRoot.clientHeight >= searchScrollRoot.scrollHeight - 80) {
+            loadSearchSongs(false);
+        }
+    });
+}
 document.getElementById("change-volume").addEventListener("click", () => {
     if (currentPlaybackMode !== 'enhanced') return;
     let volume_setting = document.getElementsByClassName("volume-setting")[0];

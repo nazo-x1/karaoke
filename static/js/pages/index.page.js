@@ -169,6 +169,8 @@ function get_song_list(page = 1) {
         let s = '';
         if (data.total === 0) {
             $.Toast("没有歌曲", "error");
+            document.getElementsByTagName("tbody")[0].innerHTML = '';
+            PagingManage($('#paging'), 0, 1);
             return;
         }
         data.data.forEach(item => {
@@ -193,25 +195,36 @@ function get_song_list(page = 1) {
     });
 }
 
-function get_history_list(queryType) {
+function get_history_list(queryType, page = 1) {
     const loader = queryType === 'history' ? KTV.queue.history : KTV.queue.usually;
-    loader().then(function (data) {
+    const pageHandler = queryType === 'history' ? 'get_history_page' : 'get_usually_page';
+    loader(page).then(function (data) {
         let s = '';
         if (data.total === 0) {
             $.Toast("没有歌曲", "error");
+            document.getElementsByTagName("tbody")[0].innerHTML = '';
+            PagingManage($('#paging'), 0, 1);
             return;
         }
         data.data.forEach(item => {
             s = s + `<tr><td colspan="4">${item.name}</td><td></td>
                     <td><a onclick="sing_song(${item.id})">点歌</a><a onclick="delete_from_list(${item.id})">删除</a></td></tr>`;
         });
-        PagingManage($('#paging'), data.totalPage, data.page);
+        PagingManage($('#paging'), data.totalPage, data.page, pageHandler);
         document.getElementsByTagName("table")[0].style.display = "";
         document.getElementById("create-time").style.display = "none";
         document.getElementsByTagName("tbody")[0].innerHTML = s;
     }).catch(function (err) {
         $.Toast(err.msg || '加载失败', 'error');
     });
+}
+
+function get_history_page(page) {
+    get_history_list('history', page);
+}
+
+function get_usually_page(page) {
+    get_history_list('usually', page);
 }
 
 function delete_song(file_id, source_origin) {

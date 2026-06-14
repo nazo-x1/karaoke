@@ -148,6 +148,8 @@ class LibraryService:
         except Exception as exc:
             fail_result(result, exc, "获取曲库列表失败")
         return result
+
+    async def delete_song(self, song_id: int, delete_disk: bool = False) -> Result:
         result = Result()
         try:
             song = await self._songs.get(song_id)
@@ -163,6 +165,8 @@ class LibraryService:
         except Exception as exc:
             fail_result(result, exc, "删除歌曲失败")
         return result
+
+    async def run_scan(self, body: dict) -> Result:
         result = Result()
         try:
             root = body.get('root', '').strip()

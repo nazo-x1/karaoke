@@ -15,6 +15,7 @@ from karaoke.infra.repositories.history_repo import HistoryRepository
 from karaoke.infra.repositories.song_repo import SongRepository
 from karaoke.results import Result
 from karaoke.services.prepare_service import PrepareService
+from settings import PAGE_SIZE
 
 
 class QueueService:
@@ -81,27 +82,34 @@ class QueueService:
     async def list_pending(self) -> Result:
         return await self._list_by_type('pendingAll')
 
-    async def list_history(self) -> Result:
-        return await self._list_by_type('history')
+    async def list_history(self, page: int = 1) -> Result:
+        return await self._list_by_type('history', page)
 
-    async def list_usually(self) -> Result:
-        return await self._list_by_type('usually')
+    async def list_usually(self, page: int = 1) -> Result:
+        return await self._list_by_type('usually', page)
 
-    async def _list_by_type(self, query_type: str) -> Result:
+    async def _list_by_type(self, query_type: str, page: int = 1) -> Result:
         result = Result()
         try:
+            total_num = 0
             if query_type == 'history':
-                histories = await self._histories.list_history()
+                histories, total_num = await self._histories.list_history_page(page)
             elif query_type == 'usually':
-                histories = await self._histories.list_usually()
+                histories, total_num = await self._histories.list_usually_page(page)
             elif query_type == 'pendingAll':
                 histories = await self._histories.list_pending()
+                total_num = len(histories)
             else:
                 result.code = 1
                 result.msg = f"未知查询类型: {query_type}"
                 return result
             result.data = await self._build_list(histories)
-            result.total = len(result.data)
+            result.total = total_num
+            result.page = page
+            if query_type in ('history', 'usually'):
+                result.totalPage = (total_num + PAGE_SIZE - 1) // PAGE_SIZE if total_num else 0
+            else:
+                result.totalPage = 1 if total_num else 0
         except Exception as exc:
             fail_result(result, exc, "获取队列失败")
         return result

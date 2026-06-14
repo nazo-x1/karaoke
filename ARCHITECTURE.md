@@ -36,8 +36,8 @@ karaoke/
 | 配置 | `POST /songs/{id}/prepare` | 预生成内嵌缓存 |
 | 队列 | `POST /queue/songs/{id}` | 点歌 |
 | 队列 | `GET /queue` | 待播队列（含 `state`: pending/playing/sung） |
-| 队列 | `GET /queue/history` | 已唱历史 |
-| 队列 | `GET /queue/usually` | 常点统计 |
+| 队列 | `GET /queue/history?page=` | 已唱历史（分页） |
+| 队列 | `GET /queue/usually?page=` | 常点歌曲（分页） |
 | 队列 | `POST /queue/songs/{id}/top` | 置顶 |
 | 队列 | `DELETE /queue/songs/{id}` | 从队列移除 |
 | 播放 | `GET /playback/songs/{id}` | 播放配置 |

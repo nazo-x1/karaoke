@@ -6,6 +6,7 @@ from typing import List, Optional
 from tortoise.exceptions import DoesNotExist
 
 from karaoke.domain.queue_policy import QueueState, sort_pending
+from settings import PAGE_SIZE
 from karaoke.models import History
 
 
@@ -38,8 +39,22 @@ class HistoryRepository:
     async def list_history(self, limit: int = 200) -> List[History]:
         return await History.filter(is_sing=QueueState.SUNG).order_by('-update_time').limit(limit)
 
+    async def list_history_page(self, page: int) -> tuple:
+        page = max(1, int(page))
+        qs = History.filter(is_sing=QueueState.SUNG).order_by('-update_time')
+        total = await qs.count()
+        rows = await qs.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+        return rows, total
+
     async def list_usually(self, limit: int = 200) -> List[History]:
         return await History.all().order_by('-times').limit(limit)
+
+    async def list_usually_page(self, page: int) -> tuple:
+        page = max(1, int(page))
+        qs = History.all().order_by('-times')
+        total = await qs.count()
+        rows = await qs.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+        return rows, total
 
     async def reset_stale_singing(self) -> None:
         for h in await History.filter(is_sing=QueueState.SINGING):

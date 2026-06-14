@@ -24,11 +24,11 @@ window.KTV = window.KTV || {};
         pending: function () {
             return KTV.http.get(base());
         },
-        history: function () {
-            return KTV.http.get(base() + '/history');
+        history: function (page) {
+            return KTV.http.get(base() + '/history', { page: page || 1 });
         },
-        usually: function () {
-            return KTV.http.get(base() + '/usually');
+        usually: function (page) {
+            return KTV.http.get(base() + '/usually', { page: page || 1 });
         },
         setTop: function (songId) {
             return KTV.http.post(base() + '/songs/' + songId + '/top');
