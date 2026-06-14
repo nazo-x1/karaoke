@@ -22,6 +22,9 @@ window.KTV = window.KTV || {};
         markFinished: function (songId) {
             return KTV.http.post(KTV.config.apiBase + '/playback/session/finished/' + songId);
         },
+        skipUnready: function (songId) {
+            return KTV.http.post(KTV.config.apiBase + '/playback/session/skip-unready/' + songId);
+        },
         waitUntilReady: async function (songId) {
             var prep = (await KTV.playback.ensureReady(songId)).data;
             if (prep.ready) return prep;

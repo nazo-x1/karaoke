@@ -244,14 +244,14 @@ function delete_song(file_id, source_origin) {
 function sing_song(file_id) {
     KTV.queue.enqueue(file_id).then(function (data) {
         get_added_songs();
-        let msg = data.msg;
-        if (data.data && data.data.prepare && !data.data.prepare.ready
-            && ['pending', 'running', 'idle'].includes(data.data.prepare.status)) {
-            msg += "（正在后台准备播放资源）";
-        }
-        $.Toast(msg, "success");
+        $.Toast(data.msg || "点歌成功", "success");
     }).catch(function (err) {
-        $.Toast(err.msg || "点歌失败", "error");
+        const msg = err.msg || "点歌失败";
+        if (msg.indexOf("准备中") >= 0 || msg.indexOf("耐心等待") >= 0) {
+            $.Toast(msg, "warning");
+        } else {
+            $.Toast(msg, "error");
+        }
     });
 }
 

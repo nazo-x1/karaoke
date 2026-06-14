@@ -51,6 +51,15 @@ class QueueService:
                     result.msg = "增强资源不完整且源视频不可用"
                 return result
 
+            if profile_needs_prepare(song, profile):
+                prep_status = await self._prepare.status(song.id)
+                if not prep_status.get('ready'):
+                    prep = await self._prepare.schedule(song.id)
+                    result.code = 1
+                    result.msg = "播放资源正在准备中，请耐心等待"
+                    result.data = {'prepare': prep}
+                    return result
+
             history = await self._histories.get_optional(song.id)
             if history:
                 if history.is_sing == QueueState.SUNG:
@@ -63,15 +72,11 @@ class QueueService:
                     is_sing=QueueState.PENDING, is_top=0,
                 )
 
-            prep = None
-            if profile_needs_prepare(song, profile):
-                prep = await self._prepare.schedule(song.id)
-
             await persist_playback_mode(song, profile)
 
             await event_bus.publish_queue_changed()
             result.msg = f"{song.display_name} 点歌成功"
-            result.data = {'playback_mode': profile.mode, 'prepare': prep}
+            result.data = {'playback_mode': profile.mode}
         except DoesNotExist:
             result.code = 1
             result.msg = "歌曲不存在"

@@ -267,8 +267,22 @@ initVolume = (eleId) => {
 };
 
 function sing_song(file_id) {
-    KTV.queue.enqueue(file_id).catch(function (err) {
-        console.log(err.msg);
+    KTV.queue.enqueue(file_id).then(function (data) {
+        getSingList();
+        if (typeof $.Toast === 'function') {
+            $.Toast(data.msg || "点歌成功", "success");
+        }
+    }).catch(function (err) {
+        const msg = err.msg || "点歌失败";
+        if (typeof $.Toast === 'function') {
+            if (msg.indexOf("准备中") >= 0 || msg.indexOf("耐心等待") >= 0) {
+                $.Toast(msg, "warning");
+            } else {
+                $.Toast(msg, "error");
+            }
+        } else {
+            console.log(msg);
+        }
     });
 }
 

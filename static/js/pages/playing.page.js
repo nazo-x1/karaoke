@@ -327,20 +327,6 @@ async function fetchPlaybackProfile(songId) {
     return res.data;
 }
 
-async function fetchPrepareStatus(songId) {
-    const res = await KTV.playback.prepareStatus(songId);
-    return res.data;
-}
-
-async function postEnsureReady(songId) {
-    const res = await KTV.playback.ensureReady(songId);
-    return res.data;
-}
-
-async function waitUntilPlaybackReady(songId) {
-    return KTV.playback.waitUntilReady(songId);
-}
-
 loadSing = async (flag = false) => {
     await getSingList();
     if (singsList.length < 1) { return; }
@@ -357,25 +343,25 @@ loadSing = async (flag = false) => {
         return;
     }
 
-    if (!profile.can_queue) {
-        $.Toast("当前歌曲不可播放", "error");
-        return;
-    }
-
-    if (!profile.ready_to_stream) {
-        $.Toast("正在准备播放资源，请稍候…", "success");
+    if (!profile.can_queue || !profile.ready_to_stream) {
+        $.Toast("播放资源未就绪，已跳过", "warning");
         try {
-            await waitUntilPlaybackReady(song.id);
-            profile = await fetchPlaybackProfile(song.id);
+            await KTV.playback.skipUnready(song.id);
         } catch (err) {
-            $.Toast(err.message || "播放资源未就绪", "error");
+            console.error(err);
+        }
+        await getSingList();
+        if (singsList.length < 1) {
+            document.getElementById("playing-text").innerText = "当前没有待播放的歌曲，快去点歌吧 ~";
+            while (video.firstChild) {
+                video.removeChild(video.firstChild);
+            }
+            video.removeAttribute('src');
+            video.load();
+            resetPlaybackState();
             return;
         }
-    }
-
-    if (!profile.ready_to_stream) {
-        $.Toast("播放资源未就绪", "error");
-        return;
+        return loadSing(flag);
     }
 
     playbackMode = profile.mode === 'enhanced' ? 'enhanced' : 'plain';

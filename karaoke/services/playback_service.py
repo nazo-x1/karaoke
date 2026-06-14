@@ -8,6 +8,7 @@ from tortoise.exceptions import DoesNotExist
 from fastapi import Request
 
 from karaoke.domain.playback import persist_playback_mode, resolve, stream_media_for_kind
+from karaoke.domain.prepare_policy import profile_needs_prepare
 from karaoke.domain.queue_policy import QueueState
 from karaoke.dto.mappers import playback_api
 from karaoke.errors import fail_result, format_api_error
@@ -112,6 +113,39 @@ class PlaybackService:
             result.msg = "歌曲不在队列中"
         except Exception as exc:
             fail_result(result, exc, "标记正在播放失败")
+        return result
+
+    async def skip_if_not_ready(self, song_id: int) -> Result:
+        result = Result()
+        try:
+            history = await self._histories.get(song_id)
+            song = await self._songs.get(song_id)
+            profile = resolve(song)
+            prep_status = await self._prepare.status(song_id)
+            stream_ready = prep_status.get('ready', False)
+
+            if stream_ready and profile.can_queue:
+                result.code = 1
+                result.msg = "歌曲已就绪，无需跳过"
+                return result
+
+            prep = None
+            if profile_needs_prepare(song, profile) and not stream_ready:
+                prep = await self._prepare.schedule(song_id)
+
+            mark_result = await self.mark_finished(song_id)
+            if mark_result.code != 0:
+                return mark_result
+
+            result.msg = f"{history.name} 未就绪，已跳过"
+            if prep:
+                result.data = {'prepare': prep}
+            return result
+        except DoesNotExist:
+            result.code = 1
+            result.msg = "歌曲不在队列中"
+        except Exception as exc:
+            fail_result(result, exc, "跳过未就绪歌曲失败")
         return result
 
     async def mark_finished(self, song_id: int) -> Result:

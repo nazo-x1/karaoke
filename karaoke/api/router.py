@@ -35,6 +35,12 @@ router.add_api_route('/playback/songs/{song_id}/ensure-ready', playback.ensure_r
 router.add_api_route('/playback/stream/{song_id}/{kind}', playback.stream, methods=['GET'], summary='流媒体')
 router.add_api_route('/playback/session/singing/{song_id}', playback.mark_singing, methods=['POST'])
 router.add_api_route('/playback/session/finished/{song_id}', playback.mark_finished, methods=['POST'])
+router.add_api_route(
+    '/playback/session/skip-unready/{song_id}',
+    playback.skip_if_not_ready,
+    methods=['POST'],
+    summary='跳过未就绪歌曲',
+)
 
 # 事件
 router.add_api_route('/events', events.sse_events, methods=['GET'], summary='SSE')

@@ -27,3 +27,7 @@ async def mark_singing(song_id: int):
 
 async def mark_finished(song_id: int):
     return await _playback.mark_finished(song_id)
+
+
+async def skip_if_not_ready(song_id: int):
+    return await _playback.skip_if_not_ready(song_id)
