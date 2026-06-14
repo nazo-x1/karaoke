@@ -77,7 +77,7 @@ app.include_router(v1_router, prefix=prefix)
 
 @app.on_event('startup')
 async def startup_event():
-    from karaoke.db_schema import ensure_schema
+    from karaoke.infra.db_schema import ensure_schema
     await asyncio.to_thread(ensure_schema)
     await QueueService().init_on_startup()
 

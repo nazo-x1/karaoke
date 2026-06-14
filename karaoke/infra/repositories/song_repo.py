@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from tortoise.exceptions import DoesNotExist
 
-from karaoke.models import Song
+from karaoke.infra.models import Song
 from settings import PAGE_SIZE
 
 

@@ -4,7 +4,7 @@
 from enum import IntEnum
 from typing import List
 
-from karaoke.models import History
+from karaoke.infra.models import History
 
 
 class QueueState(IntEnum):

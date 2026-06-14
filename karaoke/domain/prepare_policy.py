@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """播放资源准备判定（点歌 / 后台任务共用）。"""
 
-from karaoke.audio_layout import has_dual_roles, parse_audio_layout
+from karaoke.infra.audio_layout import has_dual_roles, parse_audio_layout
 from karaoke.domain.playback import PlaybackProfile, has_full_override, resolve
-from karaoke.media import can_play_directly
-from karaoke.models import Song
+from karaoke.infra.media import can_play_directly
+from karaoke.infra.models import Song
 
 
 def profile_needs_prepare(song: Song, profile: PlaybackProfile = None) -> bool:

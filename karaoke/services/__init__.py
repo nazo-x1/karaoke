@@ -1,3 +1,4 @@
+from karaoke.services.base import apply_pagination, run_guarded
 from karaoke.services.library_service import LibraryService
 from karaoke.services.song_config_service import SongConfigService
 from karaoke.services.queue_service import QueueService
@@ -10,4 +11,6 @@ __all__ = [
     'QueueService',
     'PlaybackService',
     'PrepareService',
+    'apply_pagination',
+    'run_guarded',
 ]

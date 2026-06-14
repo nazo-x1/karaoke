@@ -3,15 +3,16 @@
 
 from tortoise.exceptions import DoesNotExist
 
-from karaoke.audio_layout import merge_manual_roles, parse_audio_layout, serialize_audio_layout
+from karaoke.dto.api_result import ApiResult
+from karaoke.infra.audio_layout import merge_manual_roles, parse_audio_layout, serialize_audio_layout
 from karaoke.domain.playback import has_full_override, refresh_playback_mode, resolve
 from karaoke.domain.prepare_policy import profile_needs_prepare
 from karaoke.dto.mappers import playback_detail, song_item
-from karaoke.embedded import probe_and_save_layout
+from karaoke.infra.embedded import probe_and_save_layout
 from karaoke.errors import fail_result
 from karaoke.infra.repositories.history_repo import HistoryRepository
 from karaoke.infra.repositories.song_repo import SongRepository
-from karaoke.results import Result
+from karaoke.services.base import run_guarded
 from karaoke.services.prepare_service import PrepareService
 
 
@@ -26,12 +27,11 @@ class SongConfigService:
         self._histories = histories or HistoryRepository()
         self._prepare = prepare or PrepareService()
 
-    async def get_detail(self, song_id: int) -> Result:
-        result = Result()
-        try:
+    async def get_detail(self, song_id: int) -> ApiResult:
+        async def load():
             song = await self._songs.get(song_id)
             profile = resolve(song)
-            result.data = {
+            return {
                 'id': song.id,
                 'display_name': song.display_name,
                 'source_path': song.source_path,
@@ -40,15 +40,11 @@ class SongConfigService:
                 'is_playable': song.is_playable,
                 **playback_detail(song, profile),
             }
-        except DoesNotExist:
-            result.code = 1
-            result.msg = "歌曲不存在"
-        except Exception as exc:
-            fail_result(result, exc, "获取歌曲详情失败")
-        return result
 
-    async def patch(self, song_id: int, body: dict) -> Result:
-        result = Result()
+        return await run_guarded('获取歌曲详情失败', load, not_found_label='歌曲')
+
+    async def patch(self, song_id: int, body: dict) -> ApiResult:
+        result = ApiResult()
         try:
             song = await self._songs.get(song_id)
             display_name = body.get('display_name')
@@ -73,8 +69,8 @@ class SongConfigService:
             fail_result(result, exc, "更新歌曲失败")
         return result
 
-    async def detect_playback(self, song_id: int) -> Result:
-        result = Result()
+    async def detect_playback(self, song_id: int) -> ApiResult:
+        result = ApiResult()
         try:
             song = await self._songs.get(song_id)
             if not has_full_override(song.display_name)[0]:
@@ -92,8 +88,8 @@ class SongConfigService:
             fail_result(result, exc, "检测播放能力失败")
         return result
 
-    async def request_prepare(self, song_id: int, wait: bool = False) -> Result:
-        result = Result()
+    async def request_prepare(self, song_id: int, wait: bool = False) -> ApiResult:
+        result = ApiResult()
         try:
             song = await self._songs.get(song_id)
             if has_full_override(song.display_name)[0]:

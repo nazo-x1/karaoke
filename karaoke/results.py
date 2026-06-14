@@ -1,12 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# @Author: leeyoshinari
+"""兼容层：请使用 karaoke.dto.api_result.ApiResult。"""
 
-class Result:
-    def __init__(self, code=0, msg='Success!', data=None, total=0, page=0, total_page=0):
-        self.code = code
-        self.msg = msg
-        self.data = data
-        self.total = total
-        self.page = page
-        self.totalPage = total_page
+from karaoke.dto.api_result import ApiResult as Result  # noqa: F401

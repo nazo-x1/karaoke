@@ -67,11 +67,16 @@ window.KTV = window.KTV || {};
                     while (!done && Date.now() < deadline) {
                         var finished = await checkStatus();
                         if (finished || done) return;
-                        await new Promise(function (r) { setTimeout(r, 5000); });
+                        await new Promise(function (r) { setTimeout(r, 1500); });
                     }
                     if (!done) finish(new Error('等待播放资源超时'));
                 })();
             });
+        },
+        formatPrepareLabel: function (prep) {
+            if (!prep) return '准备中';
+            var pct = prep.progress != null ? ' ' + Math.round(prep.progress) + '%' : '';
+            return (prep.message || '准备中') + pct;
         },
     };
 })(window.KTV);

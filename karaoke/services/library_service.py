@@ -9,14 +9,15 @@ from tortoise.exceptions import DoesNotExist
 from fastapi import Request
 
 from karaoke.domain.playback import refresh_playback_mode
+from karaoke.dto.api_result import ApiResult
 from karaoke.dto.mappers import song_item
-from karaoke.embedded import probe_and_save_layout
+from karaoke.infra.embedded import probe_and_save_layout
 from karaoke.errors import fail_result, format_api_error
 from karaoke.infra.repositories.song_repo import SongRepository
-from karaoke.results import Result
-from karaoke.scanner import scan_root
+from karaoke.infra.scanner import scan_root
+from karaoke.services.base import apply_pagination, run_guarded
 from karaoke.services.queue_service import QueueService
-from karaoke.media import file_ext, probe_video_playable
+from karaoke.infra.media import file_ext, probe_video_playable
 from settings import (
     logger,
     PAGE_SIZE,
@@ -46,8 +47,8 @@ class LibraryService:
         self._songs = songs or SongRepository()
         self._queue = queue or QueueService()
 
-    async def upload_file(self, query: Request) -> Result:
-        result = Result()
+    async def upload_file(self, query: Request) -> ApiResult:
+        result = ApiResult()
         form = await query.form()
         upload = form.get('file')
         if not upload or not upload.filename:
@@ -137,20 +138,16 @@ class LibraryService:
             result.msg = format_api_error(exc, f"{filename} 上传失败")
         return result
 
-    async def get_list(self, q: str, page: int) -> Result:
-        result = Result()
-        try:
-            songs, total_num = await self._songs.list_page(q, page)
-            result.data = [song_item(s) for s in songs]
-            result.page = page
-            result.total = total_num
-            result.totalPage = (total_num + PAGE_SIZE - 1) // PAGE_SIZE if total_num else 0
-        except Exception as exc:
-            fail_result(result, exc, "获取曲库列表失败")
-        return result
+    async def get_list(self, q: str, page: int) -> ApiResult:
+        return await run_guarded('获取曲库列表失败', lambda: self._load_list(q, page))
 
-    async def delete_song(self, song_id: int, delete_disk: bool = False) -> Result:
-        result = Result()
+    async def _load_list(self, q: str, page: int) -> ApiResult:
+        songs, total_num = await self._songs.list_page(q, page)
+        result = ApiResult(data=[song_item(s) for s in songs])
+        return apply_pagination(result, total_num, page, PAGE_SIZE)
+
+    async def delete_song(self, song_id: int, delete_disk: bool = False) -> ApiResult:
+        result = ApiResult()
         try:
             song = await self._songs.get(song_id)
             if delete_disk and song.source_origin == 'upload' and os.path.isfile(song.source_path):
@@ -166,8 +163,8 @@ class LibraryService:
             fail_result(result, exc, "删除歌曲失败")
         return result
 
-    async def run_scan(self, body: dict) -> Result:
-        result = Result()
+    async def run_scan(self, body: dict) -> ApiResult:
+        result = ApiResult()
         try:
             root = body.get('root', '').strip()
             if not root:
@@ -189,8 +186,8 @@ class LibraryService:
             fail_result(result, exc, "扫描导入失败")
         return result
 
-    async def preview_scan(self, root: str, duplicate_policy: Optional[str], validate: Optional[bool]) -> Result:
-        result = Result()
+    async def preview_scan(self, root: str, duplicate_policy: Optional[str], validate: Optional[bool]) -> ApiResult:
+        result = ApiResult()
         try:
             if not root.strip():
                 result.code = 1

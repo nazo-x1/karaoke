@@ -3,8 +3,8 @@
 
 from typing import Optional
 
-from karaoke.models import Song
-from karaoke.audio_layout import layout_summary, parse_audio_layout
+from karaoke.infra.models import Song
+from karaoke.infra.audio_layout import layout_summary, parse_audio_layout
 from karaoke.domain.playback import (
     PlaybackProfile,
     list_meta_from_song,

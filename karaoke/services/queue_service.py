@@ -13,7 +13,8 @@ from karaoke.errors import fail_result
 from karaoke.events.bus import event_bus
 from karaoke.infra.repositories.history_repo import HistoryRepository
 from karaoke.infra.repositories.song_repo import SongRepository
-from karaoke.results import Result
+from karaoke.dto.api_result import ApiResult
+from karaoke.services.base import apply_pagination, run_guarded
 from karaoke.services.prepare_service import PrepareService
 from settings import PAGE_SIZE
 
@@ -38,8 +39,8 @@ class QueueService:
         song_map = await self._songs.map_by_ids([h.id for h in histories])
         return [history_item(h, song_map.get(h.id)) for h in histories]
 
-    async def enqueue(self, song_id: int) -> Result:
-        result = Result()
+    async def enqueue(self, song_id: int) -> ApiResult:
+        result = ApiResult()
         try:
             song = await self._songs.get(song_id)
             profile = resolve(song)
@@ -84,18 +85,17 @@ class QueueService:
             fail_result(result, exc, "点歌失败")
         return result
 
-    async def list_pending(self) -> Result:
+    async def list_pending(self) -> ApiResult:
         return await self._list_by_type('pendingAll')
 
-    async def list_history(self, page: int = 1) -> Result:
+    async def list_history(self, page: int = 1) -> ApiResult:
         return await self._list_by_type('history', page)
 
-    async def list_usually(self, page: int = 1) -> Result:
+    async def list_usually(self, page: int = 1) -> ApiResult:
         return await self._list_by_type('usually', page)
 
-    async def _list_by_type(self, query_type: str, page: int = 1) -> Result:
-        result = Result()
-        try:
+    async def _list_by_type(self, query_type: str, page: int = 1) -> ApiResult:
+        async def load():
             total_num = 0
             if query_type == 'history':
                 histories, total_num = await self._histories.list_history_page(page)
@@ -105,22 +105,18 @@ class QueueService:
                 histories = await self._histories.list_pending()
                 total_num = len(histories)
             else:
-                result.code = 1
-                result.msg = f"未知查询类型: {query_type}"
-                return result
-            result.data = await self._build_list(histories)
-            result.total = total_num
-            result.page = page
-            if query_type in ('history', 'usually'):
-                result.totalPage = (total_num + PAGE_SIZE - 1) // PAGE_SIZE if total_num else 0
-            else:
+                return ApiResult.fail(f"未知查询类型: {query_type}")
+            data = await self._build_list(histories)
+            result = ApiResult(data=data)
+            apply_pagination(result, total_num, page, PAGE_SIZE)
+            if query_type == 'pendingAll':
                 result.totalPage = 1 if total_num else 0
-        except Exception as exc:
-            fail_result(result, exc, "获取队列失败")
-        return result
+            return result
 
-    async def set_top(self, song_id: int) -> Result:
-        result = Result()
+        return await run_guarded('获取队列失败', load)
+
+    async def set_top(self, song_id: int) -> ApiResult:
+        result = ApiResult()
         try:
             history = await self._histories.get(song_id)
             history.is_top = 1
@@ -139,8 +135,8 @@ class QueueService:
         if history:
             await self._histories.delete(history)
 
-    async def remove(self, song_id: int) -> Result:
-        result = Result()
+    async def remove(self, song_id: int) -> ApiResult:
+        result = ApiResult()
         try:
             history = await self._histories.get(song_id)
             await self._histories.delete(history)

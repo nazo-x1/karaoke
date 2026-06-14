@@ -6,14 +6,14 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-from karaoke.audio_layout import has_dual_roles, parse_audio_layout
-from karaoke.embedded import ensure_embedded_cache
-from karaoke.media import (
+from karaoke.infra.audio_layout import has_dual_roles, parse_audio_layout
+from karaoke.infra.embedded import ensure_embedded_cache
+from karaoke.infra.media import (
     resolve_browser_video_path_readonly,
     video_mime_for_ext,
     file_ext,
 )
-from karaoke.models import Song
+from karaoke.infra.models import Song
 from settings import OVERRIDE_PATH
 
 

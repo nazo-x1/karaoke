@@ -9,18 +9,33 @@ karaoke/
 ├── api/
 │   ├── router.py              # /api/v1 路由聚合
 │   └── routes/                # 薄路由层
-├── services/                  # 应用服务层
+├── services/                  # 应用服务层（base.py 公共工具）
 ├── domain/                    # 纯领域逻辑
-├── infra/                     # 媒体、扫描、流式、仓储
+├── infra/                     # 媒体、扫描、流式、仓储、模型
+│   ├── media.py               # ffprobe / ffmpeg / 转码
+│   ├── embedded.py            # MKV 内嵌缓存
+│   ├── audio_layout.py        # 音轨布局
+│   ├── scanner.py             # 目录扫描导入
+│   ├── db_schema.py           # SQLite 增量迁移
+│   ├── models.py              # Tortoise ORM
+│   ├── streaming.py           # 分片流式响应
+│   └── repositories/          # 数据访问
+├── dto/
+│   ├── api_result.py          # 统一 JSON envelope（ApiResult）
+│   ├── mappers.py             # 实体 → DTO
+│   └── schemas.py             # TypedDict 文档
 ├── events/bus.py              # SSE 事件总线
-└── dto/mappers.py             # DTO 组装
+└── errors.py                  # 异常 → API 消息
 ```
+
+根目录 `media.py`、`models.py` 等保留为**兼容 re-export**，新代码请直接引用 `infra/`、`dto/`。
 
 ## 依赖规则
 
 - `api` → `services` → `domain` / `infra` / `events`
 - `domain` 不依赖 `services` / `api`
 - `infra` 不依赖 `services`
+- 统一响应：`services/*` 返回 `dto.ApiResult`（JSON 字段 `code/msg/data/total/page/totalPage`）
 
 ## API（/api/v1）
 

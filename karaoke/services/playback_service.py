@@ -10,13 +10,14 @@ from fastapi import Request
 from karaoke.domain.playback import persist_playback_mode, resolve, stream_media_for_kind
 from karaoke.domain.prepare_policy import profile_needs_prepare
 from karaoke.domain.queue_policy import QueueState
+from karaoke.dto.api_result import ApiResult
 from karaoke.dto.mappers import playback_api
 from karaoke.errors import fail_result, format_api_error
 from karaoke.events.bus import event_bus
 from karaoke.infra.repositories.history_repo import HistoryRepository
 from karaoke.infra.repositories.song_repo import SongRepository
 from karaoke.infra.streaming import build_stream_response, cache_not_ready_response
-from karaoke.results import Result
+from karaoke.services.base import run_guarded
 from karaoke.services.prepare_service import PrepareService
 
 
@@ -31,22 +32,17 @@ class PlaybackService:
         self._histories = histories or HistoryRepository()
         self._prepare = prepare or PrepareService()
 
-    async def get_profile(self, song_id: int) -> Result:
-        result = Result()
-        try:
+    async def get_profile(self, song_id: int) -> ApiResult:
+        async def load():
             song = await self._songs.get(song_id)
             profile = resolve(song)
             prep = await self._prepare.status(song_id)
-            result.data = playback_api(song, profile, prep)
-        except DoesNotExist:
-            result.code = 1
-            result.msg = "歌曲不存在"
-        except Exception as exc:
-            fail_result(result, exc, "获取播放配置失败")
-        return result
+            return playback_api(song, profile, prep)
 
-    async def ensure_ready(self, song_id: int) -> Result:
-        result = Result()
+        return await run_guarded('获取播放配置失败', load, not_found_label='歌曲')
+
+    async def ensure_ready(self, song_id: int) -> ApiResult:
+        result = ApiResult()
         try:
             song = await self._songs.get(song_id)
             profile = resolve(song)
@@ -69,22 +65,17 @@ class PlaybackService:
             fail_result(result, exc, "准备播放资源失败")
         return result
 
-    async def prepare_status(self, song_id: int) -> Result:
-        result = Result()
-        try:
+    async def prepare_status(self, song_id: int) -> ApiResult:
+        async def load():
             await self._songs.get(song_id)
-            result.data = await self._prepare.status(song_id)
-        except DoesNotExist:
-            result.code = 1
-            result.msg = "歌曲不存在"
-        except Exception as exc:
-            fail_result(result, exc, "获取准备状态失败")
-        return result
+            return await self._prepare.status(song_id)
+
+        return await run_guarded('获取准备状态失败', load, not_found_label='歌曲')
 
     async def stream(self, request: Request, song_id: int, kind: str):
         try:
             if kind not in ('video', 'vocals', 'accompaniment'):
-                return Result(code=1, msg="无效的流类型")
+                return ApiResult.fail("无效的流类型")
             song = await self._songs.get(song_id)
             profile = resolve(song, prepare_embedded=False)
             file_path, media_type = await asyncio.to_thread(stream_media_for_kind, song, kind)
@@ -92,15 +83,15 @@ class PlaybackService:
                 if profile.playback_source == 'embedded' and not profile.embedded_cache_ready:
                     prep = await self._prepare.status(song_id)
                     return cache_not_ready_response(prep)
-                return Result(code=1, msg="播放文件不存在或未就绪")
+                return ApiResult.fail("播放文件不存在或未就绪")
             return build_stream_response(request, file_path, media_type)
         except DoesNotExist:
-            return Result(code=1, msg="歌曲不存在")
+            return ApiResult.not_found('歌曲')
         except Exception as exc:
-            return Result(code=1, msg=format_api_error(exc, "获取播放流失败"))
+            return ApiResult.fail(format_api_error(exc, "获取播放流失败"))
 
-    async def mark_singing(self, song_id: int) -> Result:
-        result = Result()
+    async def mark_singing(self, song_id: int) -> ApiResult:
+        result = ApiResult()
         try:
             history = await self._histories.get(song_id)
             history.is_sing = QueueState.SINGING
@@ -115,8 +106,8 @@ class PlaybackService:
             fail_result(result, exc, "标记正在播放失败")
         return result
 
-    async def skip_if_not_ready(self, song_id: int) -> Result:
-        result = Result()
+    async def skip_if_not_ready(self, song_id: int) -> ApiResult:
+        result = ApiResult()
         try:
             history = await self._histories.get(song_id)
             song = await self._songs.get(song_id)
@@ -148,8 +139,8 @@ class PlaybackService:
             fail_result(result, exc, "跳过未就绪歌曲失败")
         return result
 
-    async def mark_finished(self, song_id: int) -> Result:
-        result = Result()
+    async def mark_finished(self, song_id: int) -> ApiResult:
+        result = ApiResult()
         try:
             history = await self._histories.get(song_id)
             history.is_sing = QueueState.SUNG
@@ -165,6 +156,6 @@ class PlaybackService:
             fail_result(result, exc, "标记已唱完失败")
         return result
 
-    async def send_command(self, code: int, data) -> Result:
+    async def send_command(self, code: int, data) -> ApiResult:
         await event_bus.publish(code, data)
-        return Result()
+        return ApiResult()

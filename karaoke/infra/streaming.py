@@ -2,15 +2,51 @@
 # -*- coding: utf-8 -*-
 
 import os
+import typing
 from typing import Optional, Tuple
 from urllib.parse import quote
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from karaoke.media import file_ext
-from karaoke.responses import StreamResponse
+from karaoke.infra.media import file_ext
 from settings import CONTENT_TYPE
+
+
+class StreamResponse(StreamingResponse):
+    """StreamingResponse with UTF-8 header encoding."""
+
+    def init_headers(
+        self, headers: typing.Optional[typing.Mapping[str, str]] = None
+    ) -> None:
+        if headers is None:
+            raw_headers: typing.List[typing.Tuple[bytes, bytes]] = []
+            populate_content_length = True
+            populate_content_type = True
+        else:
+            raw_headers = [
+                (k.lower().encode("utf-8"), v.encode("utf-8"))
+                for k, v in headers.items()
+            ]
+            keys = [h[0] for h in raw_headers]
+            populate_content_length = b"content-length" not in keys
+            populate_content_type = b"content-type" not in keys
+
+        body = getattr(self, "body", None)
+        if (
+            body is not None
+            and populate_content_length
+            and not (self.status_code < 200 or self.status_code in (204, 304))
+        ):
+            raw_headers.append((b"content-length", str(len(body)).encode("utf-8")))
+
+        content_type = self.media_type
+        if content_type is not None and populate_content_type:
+            if content_type.startswith("text/"):
+                content_type += "; charset=" + self.charset
+            raw_headers.append((b"content-type", content_type.encode("utf-8")))
+
+        self.raw_headers = raw_headers
 
 
 async def read_stream_file(file_path: str, start_index: int = 0, end_index: Optional[int] = None):

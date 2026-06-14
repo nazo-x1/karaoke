@@ -7,7 +7,7 @@ from tortoise.exceptions import DoesNotExist
 
 from karaoke.domain.queue_policy import QueueState, sort_pending
 from settings import PAGE_SIZE
-from karaoke.models import History
+from karaoke.infra.models import History
 
 
 class HistoryRepository:

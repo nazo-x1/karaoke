@@ -11,18 +11,18 @@ from typing import Callable, Dict, Optional
 
 from tortoise.exceptions import DoesNotExist
 
-from karaoke.audio_layout import has_dual_roles, parse_audio_layout
+from karaoke.infra.audio_layout import has_dual_roles, parse_audio_layout
 from karaoke.domain.playback import (
     has_full_override,
     persist_playback_mode,
     resolve,
 )
 from karaoke.domain.prepare_policy import profile_needs_prepare
-from karaoke.embedded import ensure_embedded_cache, probe_and_save_layout
+from karaoke.infra.embedded import ensure_embedded_cache, probe_and_save_layout
 from karaoke.errors import format_api_error
 from karaoke.events.bus import event_bus
 from karaoke.infra.repositories.song_repo import SongRepository
-from karaoke.media import (
+from karaoke.infra.media import (
     browser_mp4_cache_path,
     can_play_directly,
     ensure_browser_mp4_cache,
