@@ -18,7 +18,7 @@ if "files" in tables or "song" not in tables:
 sys.exit(0)
 PY
   python - <<'PY'
-from karaoke.db_schema import ensure_schema
+from karaoke.infra.db_schema import ensure_schema
 ensure_schema("/KTV/sqlite3.db")
 PY
 fi

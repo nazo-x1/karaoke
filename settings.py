@@ -55,7 +55,7 @@ TORTOISE_ORM = {
     "connections": {"default": f"sqlite://{FILE_PATH}/sqlite3.db"},
     "apps": {
         "models": {
-            "models": ["karaoke.models", "aerich.models"],
+            "models": ["karaoke.infra.models", "aerich.models"],
             "default_connection": "default"
         }
     },

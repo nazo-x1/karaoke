@@ -28,7 +28,7 @@ karaoke/
 └── errors.py                  # 异常 → API 消息
 ```
 
-根目录 `media.py`、`models.py` 等保留为**兼容 re-export**，新代码请直接引用 `infra/`、`dto/`。
+- Tortoise ORM 模型注册：`karaoke.infra.models`（根目录 `karaoke.models` 为兼容 re-export）
 
 ## 依赖规则
 
