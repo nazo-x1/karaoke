@@ -1,0 +1,14 @@
+services:
+  karaoke:
+    image: ghcr.io/nazo-x1/karaoke:latest
+    build: .
+    ports:
+      - "15233:15233"
+    volumes:
+      - karaoke-data:/KTV
+    restart: unless-stopped
+    environment:
+      - FORCE_DB_RESET=0
+
+volumes:
+  karaoke-data:

@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.idea
+*.log
+logs/
+KTV/
+sqlite3.db
+*.md
+!README.md
+tests/
