@@ -6,5 +6,5 @@ from karaoke.dto.api_result import ApiResult
 
 
 def as_json(result: ApiResult) -> dict:
-    """显式转为 JSON dict（FastAPI 默认也能序列化 ApiResult 属性）。"""
+    """显式转为 JSON dict（路由直接返回 ApiResult 时 FastAPI 也会自动序列化）。"""
     return result.to_dict()

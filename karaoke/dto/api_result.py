@@ -1,30 +1,23 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""统一 API 响应模型（/api/v1 JSON  envelope）。"""
+"""统一 API 响应模型（/api/v1 JSON envelope）。"""
 
-from typing import Any, Optional
+from typing import Any
+
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
-class ApiResult:
+class ApiResult(BaseModel):
     """与前端约定：code=0 成功，data 承载业务载荷，分页字段 total/page/totalPage。"""
 
-    __slots__ = ('code', 'msg', 'data', 'total', 'page', 'totalPage')
+    model_config = ConfigDict(populate_by_name=True)
 
-    def __init__(
-        self,
-        code: int = 0,
-        msg: str = 'Success!',
-        data: Any = None,
-        total: int = 0,
-        page: int = 0,
-        total_page: int = 0,
-    ) -> None:
-        self.code = code
-        self.msg = msg
-        self.data = data
-        self.total = total
-        self.page = page
-        self.totalPage = total_page
+    code: int = 0
+    msg: str = 'Success!'
+    data: Any = None
+    total: int = 0
+    page: int = 0
+    totalPage: int = Field(default=0, validation_alias=AliasChoices('totalPage', 'total_page'))
 
     @classmethod
     def ok(cls, data: Any = None, msg: str = 'Success!', **meta: Any) -> 'ApiResult':
@@ -45,11 +38,4 @@ class ApiResult:
         return self
 
     def to_dict(self) -> dict:
-        return {
-            'code': self.code,
-            'msg': self.msg,
-            'data': self.data,
-            'total': self.total,
-            'page': self.page,
-            'totalPage': self.totalPage,
-        }
+        return self.model_dump()
