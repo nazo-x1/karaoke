@@ -343,8 +343,8 @@ loadSing = async (flag = false) => {
         return;
     }
 
-    if (!profile.can_queue || !profile.ready_to_stream) {
-        $.Toast("播放资源未就绪，已跳过", "warning");
+    if (!profile.can_queue) {
+        $.Toast("无法播放该歌曲", "warning");
         try {
             await KTV.playback.skipUnready(song.id);
         } catch (err) {
@@ -362,6 +362,33 @@ loadSing = async (flag = false) => {
             return;
         }
         return loadSing(flag);
+    }
+
+    if (!profile.ready_to_stream) {
+        const tip = document.getElementById("playing-text");
+        tip.innerText = "准备中：" + song.name + "…";
+        try {
+            await KTV.playback.waitUntilReady(song.id);
+            profile = await fetchPlaybackProfile(song.id);
+        } catch (err) {
+            $.Toast(err.message || "播放资源准备失败", "warning");
+            try {
+                await KTV.playback.skipUnready(song.id);
+            } catch (e) {
+                console.error(e);
+            }
+            await getSingList();
+            if (singsList.length < 1) {
+                tip.innerText = "当前没有待播放的歌曲，快去点歌吧 ~";
+                resetPlaybackState();
+                return;
+            }
+            return loadSing(flag);
+        }
+        if (!profile.ready_to_stream) {
+            $.Toast("播放资源仍未就绪", "warning");
+            return;
+        }
     }
 
     playbackMode = profile.mode === 'enhanced' ? 'enhanced' : 'plain';
@@ -601,8 +628,27 @@ window.onload = function() {
         userInterruption(message.data);
     });
     KTV.events.on(8, async function () {
+        const prevHeadId = singsList.length > 0 ? singsList[0].id : null;
+        const wasPlaying = video && !video.paused && !video.ended;
         await getSingList();
         showTips();
+        if (singsList.length < 1) {
+            if (!wasPlaying) {
+                document.getElementById("playing-text").innerText = "当前没有待播放的歌曲，快去点歌吧 ~";
+                while (video.firstChild) {
+                    video.removeChild(video.firstChild);
+                }
+                video.removeAttribute('src');
+                video.load();
+                resetPlaybackState();
+            }
+            return;
+        }
+        const newHeadId = singsList[0].id;
+        const headChanged = prevHeadId !== newHeadId;
+        if (!wasPlaying && (headChanged || currentSongId !== newHeadId || !videoReady)) {
+            loadSing(false);
+        }
     });
     KTV.events.on(9, function (message) {
         if (singsList.length > 0 && String(singsList[0].id) === String(message.data)) {
