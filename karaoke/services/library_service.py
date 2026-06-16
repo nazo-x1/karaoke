@@ -17,6 +17,7 @@ from karaoke.infra.repositories.song_repo import SongRepository
 from karaoke.infra.scanner import scan_root
 from karaoke.services.base import apply_pagination, run_guarded, run_scan_guarded
 from karaoke.services.queue_service import QueueService
+from karaoke.services.prepare_service import PrepareService
 from settings import (
     logger,
     PAGE_SIZE,
@@ -42,9 +43,11 @@ class LibraryService:
         self,
         songs: Optional[SongRepository] = None,
         queue: Optional[QueueService] = None,
+        prepare: Optional[PrepareService] = None,
     ) -> None:
         self._songs = songs or SongRepository()
         self._queue = queue or QueueService()
+        self._prepare = prepare or PrepareService()
 
     async def upload_file(self, query: Request) -> ApiResult:
         form = await query.form()
@@ -144,7 +147,13 @@ class LibraryService:
 
     async def _load_list(self, q: str, page: int) -> ApiResult:
         songs, total_num = await self._songs.list_page(q, page)
-        result = ApiResult(data=[song_item(s) for s in songs])
+        active = self._prepare.active_tasks()
+        result = ApiResult(
+            data=[
+                song_item(s, prepare=active.get(s.id))
+                for s in songs
+            ],
+        )
         return apply_pagination(result, total_num, page, PAGE_SIZE)
 
     async def delete_song(self, song_id: int, delete_disk: bool = False) -> ApiResult:

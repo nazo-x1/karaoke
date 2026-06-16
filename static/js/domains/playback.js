@@ -8,10 +8,10 @@ window.KTV = window.KTV || {};
             return KTV.http.get(base(songId));
         },
         prepareStatus: function (songId) {
-            return KTV.http.get(base(songId) + '/prepare-status');
+            return KTV.http.get(base(songId) + '/prepare');
         },
-        ensureReady: function (songId) {
-            return KTV.http.post(base(songId) + '/ensure-ready');
+        schedulePrepare: function (songId) {
+            return KTV.http.post(base(songId) + '/prepare');
         },
         streamUrl: function (songId, kind) {
             return KTV.config.apiBase + '/playback/stream/' + songId + '/' + kind;
@@ -26,7 +26,7 @@ window.KTV = window.KTV || {};
             return KTV.http.post(KTV.config.apiBase + '/playback/session/skip-unready/' + songId);
         },
         waitUntilReady: async function (songId) {
-            var prep = (await KTV.playback.ensureReady(songId)).data;
+            var prep = (await KTV.playback.schedulePrepare(songId)).data;
             if (prep.ready) return prep;
 
             return new Promise(function (resolve, reject) {

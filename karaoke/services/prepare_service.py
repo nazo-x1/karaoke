@@ -77,6 +77,13 @@ class PrepareTaskManager:
             task.asyncio_task = asyncio.create_task(self._run(task))
             return self._to_dict(task)
 
+    def active_tasks(self) -> Dict[int, dict]:
+        return {
+            song_id: self._to_dict(task)
+            for song_id, task in self._tasks.items()
+            if task.state in (PrepareState.PENDING, PrepareState.RUNNING)
+        }
+
     async def status(self, song_id: int) -> dict:
         if await self._is_stream_ready(song_id):
             return {
@@ -284,11 +291,11 @@ class PrepareService:
     async def status(self, song_id: int) -> dict:
         return await self._manager.status(song_id)
 
+    def active_tasks(self) -> Dict[int, dict]:
+        return self._manager.active_tasks()
+
     async def wait_until_ready(self, song_id: int, timeout: float = 3600.0) -> dict:
         return await self._manager.wait_until_ready(song_id, timeout)
-
-    async def ensure_ready(self, song_id: int) -> dict:
-        return await self._manager.schedule(song_id)
 
     @staticmethod
     def needs_prepare(song, profile=None) -> bool:

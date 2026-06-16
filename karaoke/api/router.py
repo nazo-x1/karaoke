@@ -30,8 +30,8 @@ router.add_api_route('/queue/songs/{song_id}', queue.remove, methods=['DELETE'],
 
 # 播放
 router.add_api_route('/playback/songs/{song_id}', playback.get_profile, methods=['GET'], summary='播放配置')
-router.add_api_route('/playback/songs/{song_id}/prepare-status', playback.prepare_status, methods=['GET'])
-router.add_api_route('/playback/songs/{song_id}/ensure-ready', playback.ensure_ready, methods=['POST'])
+router.add_api_route('/playback/songs/{song_id}/prepare', playback.get_prepare, methods=['GET'], summary='准备状态')
+router.add_api_route('/playback/songs/{song_id}/prepare', playback.schedule_prepare, methods=['POST'], summary='开始准备')
 router.add_api_route('/playback/stream/{song_id}/{kind}', playback.stream, methods=['GET'], summary='流媒体')
 router.add_api_route('/playback/session/singing/{song_id}', playback.mark_singing, methods=['POST'])
 router.add_api_route('/playback/session/finished/{song_id}', playback.mark_finished, methods=['POST'])

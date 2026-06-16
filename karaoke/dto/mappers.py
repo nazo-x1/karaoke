@@ -23,14 +23,14 @@ def effective_mode(song: Song, profile: PlaybackProfile) -> str:
     return profile.mode if profile.mode != 'not_ready' else song.playback_mode
 
 
-def song_item(song: Song, profile: Optional[PlaybackProfile] = None) -> dict:
+def song_item(song: Song, profile: Optional[PlaybackProfile] = None, prepare: Optional[dict] = None) -> dict:
     if profile is not None:
         mode = effective_mode(song, profile)
         source = profile.playback_source
         can_queue = profile.can_queue
     else:
         mode, source, can_queue = list_meta_from_song(song)
-    return {
+    item = {
         'id': song.id,
         'display_name': song.display_name,
         'source_origin': song.source_origin,
@@ -42,6 +42,9 @@ def song_item(song: Song, profile: Optional[PlaybackProfile] = None) -> dict:
         'create_time': fmt_time(song.create_time),
         'update_time': fmt_time(song.update_time),
     }
+    if prepare:
+        item['prepare'] = prepare
+    return item
 
 
 def playback_detail(song: Song, profile: PlaybackProfile) -> dict:

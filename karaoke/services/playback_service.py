@@ -41,10 +41,17 @@ class PlaybackService:
 
         return await run_guarded('获取播放配置失败', load, not_found_msg='歌曲不存在')
 
-    async def ensure_ready(self, song_id: int) -> ApiResult:
+    async def get_prepare(self, song_id: int) -> ApiResult:
+        async def load():
+            await self._songs.get(song_id)
+            return await self._prepare.status(song_id)
+
+        return await run_guarded('获取准备状态失败', load, not_found_msg='歌曲不存在')
+
+    async def schedule_prepare(self, song_id: int) -> ApiResult:
         async def action():
             song = await self._songs.get(song_id)
-            prep = await self._prepare.ensure_ready(song_id)
+            prep = await self._prepare.schedule(song_id)
             await persist_playback_mode(song, resolve(song))
             if prep.get('ready'):
                 return ApiResult(data=prep, msg='播放资源已就绪')
@@ -55,13 +62,6 @@ class PlaybackService:
             return ApiResult(data=prep, msg='等待准备播放资源')
 
         return await run_guarded('准备播放资源失败', action, not_found_msg='歌曲不存在')
-
-    async def prepare_status(self, song_id: int) -> ApiResult:
-        async def load():
-            await self._songs.get(song_id)
-            return await self._prepare.status(song_id)
-
-        return await run_guarded('获取准备状态失败', load, not_found_msg='歌曲不存在')
 
     async def stream(self, request: Request, song_id: int, kind: str):
         try:

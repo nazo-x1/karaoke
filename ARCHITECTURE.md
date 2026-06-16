@@ -55,8 +55,8 @@ karaoke/
 | 队列 | `POST /queue/songs/{id}/top` | 置顶 |
 | 队列 | `DELETE /queue/songs/{id}` | 从队列移除 |
 | 播放 | `GET /playback/songs/{id}` | 播放配置 |
-| 播放 | `GET /playback/songs/{id}/prepare-status` | 准备状态 |
-| 播放 | `POST /playback/songs/{id}/ensure-ready` | 确保就绪 |
+| 播放 | `GET /playback/songs/{id}/prepare` | 准备状态 |
+| 播放 | `POST /playback/songs/{id}/prepare` | 开始准备 |
 | 播放 | `GET /playback/stream/{id}/{kind}` | 流媒体（video/vocals/accompaniment） |
 | 播放 | `POST /playback/session/singing/{id}` | 标记正在播放 |
 | 播放 | `POST /playback/session/finished/{id}` | 标记已唱完 |
