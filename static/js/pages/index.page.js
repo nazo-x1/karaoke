@@ -19,6 +19,11 @@ function statusLabel(item) {
     return item.can_queue ? '<span class="status-ok">可点歌</span>' : '<span class="status-bad">不可用</span>';
 }
 
+function toastMsg(msg, fallback) {
+    const text = (msg || '').trim();
+    return text && text !== 'Success!' ? text : fallback;
+}
+
 document.getElementById("file-upload").addEventListener('click', () => {
     let fileUpload_input = document.getElementById("file-input");
     fileUpload_input.click();
@@ -115,7 +120,7 @@ function runScanPreview() {
             `预览：新增 ${d.added}，跳过 ${d.skipped}，重命名 ${d.renamed}，无效 ${d.invalid}`;
     }).catch(function (err) {
         close_modal_cover();
-        $.Toast(err.msg || "预览失败", 'error');
+        $.Toast(toastMsg(err.msg, "预览失败"), 'error');
     });
 }
 
@@ -136,31 +141,13 @@ function runScanExecute() {
         get_song_list();
     }).catch(function (err) {
         close_modal_cover();
-        $.Toast(err.msg || "扫描失败", 'error');
+        $.Toast(toastMsg(err.msg, "扫描失败"), 'error');
     });
 }
 
 document.getElementById("file-search").addEventListener('input', () => {
     clearTimeout(songListTimeout);
     songListTimeout = setTimeout(() => { get_song_list(); }, 500);
-});
-
-document.getElementById("generate_code").addEventListener('click', () => {
-    let qrcodeEle = document.getElementsByClassName("qrcode")[0];
-    if (qrcodeEle.style.display !== "block") {
-        new QRCode(document.getElementById("qrcode"), {
-            text: window.location.protocol + "//" + window.location.host + server + "/song",
-            width: 200,
-            height: 200,
-            colorDark: "#000000",
-            colorLight: "#ffffff",
-            correctLevel: QRCode.CorrectLevel.H
-        });
-        qrcodeEle.style.display = "block";
-    } else {
-        qrcodeEle.style.display = "none";
-        document.getElementById("qrcode").innerHTML = '';
-    }
 });
 
 function get_song_list(page = 1) {
@@ -174,16 +161,13 @@ function get_song_list(page = 1) {
             return;
         }
         data.data.forEach(item => {
-            const singLink = item.can_queue
-                ? `<a onclick="sing_song(${item.id})">点歌</a>`
-                : `<span style="color:#999">点歌</span>`;
             s = s + `<tr>
                 <td>${item.display_name}</td>
                 <td>${originLabel(item.source_origin)}</td>
                 <td>${modeLabel(item)}</td>
                 <td>${statusLabel(item)}</td>
                 <td>${item.create_time}</td>
-                <td>${singLink}<a href="${server}/song/edit/${item.id}">编辑</a><a onclick="delete_song(${item.id}, '${item.source_origin}')">删除</a></td>
+                <td><a href="${server}/song/edit/${item.id}">编辑</a><a onclick="delete_song(${item.id}, '${item.source_origin}')">删除</a></td>
             </tr>`;
         });
         PagingManage($('#paging'), data.totalPage, data.page);
@@ -191,40 +175,8 @@ function get_song_list(page = 1) {
         document.getElementById("create-time").style.display = "";
         document.getElementsByTagName("tbody")[0].innerHTML = s;
     }).catch(function (err) {
-        $.Toast(err.msg || '加载失败', 'error');
+        $.Toast(toastMsg(err.msg, '加载失败'), 'error');
     });
-}
-
-function get_history_list(queryType, page = 1) {
-    const loader = queryType === 'history' ? KTV.queue.history : KTV.queue.usually;
-    const pageHandler = queryType === 'history' ? 'get_history_page' : 'get_usually_page';
-    loader(page).then(function (data) {
-        let s = '';
-        if (data.total === 0) {
-            $.Toast("没有歌曲", "error");
-            document.getElementsByTagName("tbody")[0].innerHTML = '';
-            PagingManage($('#paging'), 0, 1);
-            return;
-        }
-        data.data.forEach(item => {
-            s = s + `<tr><td colspan="4">${item.name}</td><td></td>
-                    <td><a onclick="sing_song(${item.id})">点歌</a><a onclick="delete_from_list(${item.id})">删除</a></td></tr>`;
-        });
-        PagingManage($('#paging'), data.totalPage, data.page, pageHandler);
-        document.getElementsByTagName("table")[0].style.display = "";
-        document.getElementById("create-time").style.display = "none";
-        document.getElementsByTagName("tbody")[0].innerHTML = s;
-    }).catch(function (err) {
-        $.Toast(err.msg || '加载失败', 'error');
-    });
-}
-
-function get_history_page(page) {
-    get_history_list('history', page);
-}
-
-function get_usually_page(page) {
-    get_history_list('usually', page);
 }
 
 function delete_song(file_id, source_origin) {
@@ -233,39 +185,10 @@ function delete_song(file_id, source_origin) {
         delete_disk = confirm("是否同时删除 __keep__ 中的上传文件？\n取消则仅删除数据库记录。");
     }
     KTV.library.remove(file_id, delete_disk).then(function (data) {
-        $.Toast(data.msg, "success");
+        $.Toast(toastMsg(data.msg, "删除成功"), "success");
         get_song_list();
-        get_added_songs();
     }).catch(function (err) {
-        $.Toast(err.msg || "删除失败", "error");
-    });
-}
-
-function sing_song(file_id) {
-    KTV.queue.enqueue(file_id).then(function (data) {
-        get_added_songs();
-        $.Toast(data.msg || "点歌成功", "success");
-    }).catch(function (err) {
-        const msg = err.msg || "点歌失败";
-        if (msg.indexOf("准备中") >= 0 || msg.indexOf("耐心等待") >= 0) {
-            $.Toast(msg, "warning");
-        } else {
-            $.Toast(msg, "error");
-        }
-    });
-}
-
-function get_added_songs() {
-    KTV.queue.pending().then(function (data) {
-        document.getElementById("addSongs").innerText = data.total;
-    }).catch(function (err) {
-        $.Toast(err.msg, "error");
-    });
-}
-
-function delete_from_list(file_id) {
-    KTV.queue.remove(file_id).catch(function (err) {
-        console.log(err.msg);
+        $.Toast(toastMsg(err.msg, "删除失败"), "error");
     });
 }
 
@@ -281,5 +204,4 @@ function close_modal_cover() {
 
 window.onload = function() {
     get_song_list();
-    setTimeout(() => { get_added_songs(); }, 500);
 };

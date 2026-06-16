@@ -78,8 +78,9 @@ class QueueService:
 
         await persist_playback_mode(song, profile)
         await event_bus.publish_queue_changed()
+        display = (song.display_name or '').strip() or f'歌曲 #{song.id}'
         return ApiResult(
-            msg=f"{song.display_name} 点歌成功",
+            msg=f'{display} 点歌成功',
             data={'playback_mode': profile.mode},
         )
 

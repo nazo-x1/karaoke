@@ -7,7 +7,6 @@
     <link rel="stylesheet" href="/static/css/index.css">
     <link rel="stylesheet" href="/static/css/toast.style.css">
     <script type="text/javascript" src="/static/js/jq.min.js"></script>
-    <script type="text/javascript" src="/static/js/qrcode.min.js"></script>
     <script type="text/javascript" src="/static/js/toast.script.js"></script>
     <script type="text/javascript" src="/static/js/fenye.js"></script>
     <style>
@@ -27,18 +26,13 @@
     <div class="head">
         <div style="display: flex; align-items: center; flex-wrap: wrap; gap: .5rem;">
             <input id="file-input" type="file" multiple accept="video/*,.mp4,.mkv,.avi,.mov,.webm,.m4v" style="display: none;">
-            <input id="file-search" type="text" style="height: 30px; margin-left: 2px; margin-right: 8px;" placeholder="请输入歌曲或歌手名字 ~" autocomplete="off">
+            <input id="file-search" type="text" style="height: 30px; margin-left: 2px; margin-right: 8px;" placeholder="搜索曲库（管理）" autocomplete="off">
             <a href="#" id="file-upload">上传文件</a>
             <a href="#" id="scan-import">扫描导入</a>
-            <a href="#" id="generate_code">手机点歌</a>
-            <div class="qrcode"><div id="qrcode"></div></div>
             <a href="{{ prefix }}/sing" target="_blank">开始K歌</a>
         </div>
-        <div style="display: flex; align-items: center; margin-top: 1rem;">
-            <a href="#" onclick="get_song_list()" style="">曲库列表</a>
-            <a href="#" onclick="get_history_list('history')" style="">K歌历史</a>
-            <a href="#" onclick="get_history_list('usually')" style="">常点的歌</a>
-            <a href="{{ prefix }}/song" target="_blank" style="">控制台(已点<span id="addSongs">0</span>)</a>
+        <div style="display: flex; align-items: center; margin-top: 1rem; color: #666; font-size: .9rem;">
+            点歌、已点队列与遥控请使用点歌台（RC）客户端或 Android TV 播放端。
         </div>
     </div>
     <div style="margin-top: 3rem;">

@@ -65,13 +65,6 @@ async def play(request: Request):
     )
 
 
-@app.get(prefix + "/song")
-async def deal_song(request: Request):
-    return templates.TemplateResponse(
-        request=request, name="client.html", context={"request": request, "prefix": prefix}
-    )
-
-
 app.include_router(v1_router, prefix=prefix)
 
 
