@@ -3,11 +3,12 @@
 
 import os
 import typing
-from typing import Optional, Tuple
+from typing import Iterator, Optional, Tuple
 from urllib.parse import quote
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.concurrency import iterate_in_threadpool
 
 from karaoke.infra.media import file_ext
 from settings import CONTENT_TYPE
@@ -49,7 +50,11 @@ class StreamResponse(StreamingResponse):
         self.raw_headers = raw_headers
 
 
-async def read_stream_file(file_path: str, start_index: int = 0, end_index: Optional[int] = None):
+def _iter_file_chunks(
+    file_path: str,
+    start_index: int = 0,
+    end_index: Optional[int] = None,
+) -> Iterator[bytes]:
     with open(file_path, 'rb') as f:
         f.seek(start_index)
         remaining = None if end_index is None else end_index - start_index + 1
@@ -63,6 +68,13 @@ async def read_stream_file(file_path: str, start_index: int = 0, end_index: Opti
                 remaining -= len(chunk)
                 if remaining <= 0:
                     break
+
+
+async def read_stream_file(file_path: str, start_index: int = 0, end_index: Optional[int] = None):
+    async for chunk in iterate_in_threadpool(
+        _iter_file_chunks(file_path, start_index, end_index),
+    ):
+        yield chunk
 
 
 def build_stream_response(

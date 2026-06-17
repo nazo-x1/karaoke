@@ -21,6 +21,9 @@ def get_config(key):
     return cfg.get('default', key, fallback=None)
 
 
+PREPARE_MAX_CONCURRENT = max(1, int(get_config("prepare_max_concurrent") or 2))
+
+
 def get_config_bool(key, default=False):
     val = get_config(key)
     if val is None:

@@ -4,10 +4,10 @@
 
 import asyncio
 import os
-import traceback
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Dict, Optional
+from typing import Callable, Deque, Dict, Optional
 
 from tortoise.exceptions import DoesNotExist
 
@@ -28,7 +28,7 @@ from karaoke.infra.media import (
     ensure_browser_mp4_cache,
     _validate_browser_mp4,
 )
-from settings import logger
+from settings import PREPARE_MAX_CONCURRENT, logger
 
 
 class PrepareState(str, Enum):
@@ -53,10 +53,17 @@ class _PrepareTask:
 
 
 class PrepareTaskManager:
-    def __init__(self, songs: Optional[SongRepository] = None) -> None:
+    def __init__(
+        self,
+        songs: Optional[SongRepository] = None,
+        max_concurrent: Optional[int] = None,
+    ) -> None:
         self._songs = songs or SongRepository()
+        self._max_concurrent = max(1, max_concurrent or PREPARE_MAX_CONCURRENT)
         self._lock = asyncio.Lock()
         self._tasks: Dict[int, _PrepareTask] = {}
+        self._wait_queue: Deque[int] = deque()
+        self._running = 0
 
     async def schedule(self, song_id: int) -> dict:
         if await self._is_stream_ready(song_id):
@@ -74,8 +81,10 @@ class PrepareTaskManager:
 
             task = _PrepareTask(song_id=song_id)
             self._tasks[song_id] = task
-            task.asyncio_task = asyncio.create_task(self._run(task))
-            return self._to_dict(task)
+            self._enqueue(song_id)
+
+        await self._pump_queue()
+        return self._to_dict(self._tasks[song_id])
 
     def active_tasks(self) -> Dict[int, dict]:
         return {
@@ -142,6 +151,38 @@ class PrepareTaskManager:
                 return st
             await asyncio.sleep(1.0)
 
+    def _enqueue(self, song_id: int) -> None:
+        self._wait_queue = deque(sid for sid in self._wait_queue if sid != song_id)
+        self._wait_queue.append(song_id)
+
+    async def _pump_queue(self) -> None:
+        async with self._lock:
+            while self._running < self._max_concurrent:
+                song_id = self._pop_runnable()
+                if song_id is None:
+                    break
+                task = self._tasks.get(song_id)
+                if not task or task.state != PrepareState.PENDING or task.asyncio_task is not None:
+                    continue
+                self._running += 1
+                task.asyncio_task = asyncio.create_task(self._run_and_release(task))
+
+    def _pop_runnable(self) -> Optional[int]:
+        while self._wait_queue:
+            song_id = self._wait_queue.popleft()
+            task = self._tasks.get(song_id)
+            if task and task.state == PrepareState.PENDING and task.asyncio_task is None:
+                return song_id
+        return None
+
+    async def _run_and_release(self, task: _PrepareTask) -> None:
+        try:
+            await self._run(task)
+        finally:
+            async with self._lock:
+                self._running = max(0, self._running - 1)
+            await self._pump_queue()
+
     async def _is_stream_ready(self, song_id: int) -> bool:
         song = await self._songs.get_optional(song_id)
         if not song:
@@ -160,6 +201,7 @@ class PrepareTaskManager:
 
     async def _run(self, task: _PrepareTask) -> None:
         task.state = PrepareState.RUNNING
+        task.message = '准备中'
         song_id = task.song_id
         loop = asyncio.get_running_loop()
         updater = self._make_progress_updater(task, loop)
@@ -256,19 +298,31 @@ class PrepareTaskManager:
 
         return update
 
-    @staticmethod
-    def _to_dict(task: _PrepareTask) -> dict:
+    def _to_dict(self, task: _PrepareTask) -> dict:
         ready = task.state in (PrepareState.READY, PrepareState.NOT_NEEDED)
+        message = task.message
+        if task.state == PrepareState.PENDING and task.asyncio_task is None:
+            ahead = self._queue_ahead_count(task.song_id)
+            if ahead > 0:
+                message = f'排队等待中（前方 {ahead} 首）'
         return {
             'song_id': task.song_id,
             'status': task.state.value,
             'ready': ready,
             'phase': task.phase,
             'progress': task.progress,
-            'message': task.message,
+            'message': message,
             'prepare_kind': task.prepare_kind,
             'error': task.error,
         }
+
+    def _queue_ahead_count(self, song_id: int) -> int:
+        ahead = 0
+        for sid in self._wait_queue:
+            if sid == song_id:
+                break
+            ahead += 1
+        return ahead + self._running
 
 
 _manager: Optional[PrepareTaskManager] = None
