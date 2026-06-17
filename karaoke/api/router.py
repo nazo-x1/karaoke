@@ -3,7 +3,7 @@
 
 from fastapi import APIRouter, Request, Body
 
-from karaoke.api.routes import library, config, queue, playback, events
+from karaoke.api.routes import library, config, queue, playback, events, system
 
 router = APIRouter(prefix='/api/v1', tags=['KTV v1'])
 
@@ -45,3 +45,11 @@ router.add_api_route(
 # 事件
 router.add_api_route('/events', events.sse_events, methods=['GET'], summary='SSE')
 router.add_api_route('/events/command', events.send_command_post, methods=['POST'], summary='发送遥控指令')
+
+# 系统（测试 / 维护）
+router.add_api_route(
+    '/system/play-cache/clear',
+    system.clear_play_cache,
+    methods=['POST'],
+    summary='清除播放转码缓存',
+)
