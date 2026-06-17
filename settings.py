@@ -7,10 +7,15 @@ import sys
 import configparser
 import logging.handlers
 
+from dotenv import load_dotenv
+
 if hasattr(sys, 'frozen'):
     path = os.path.dirname(sys.executable)
 else:
     path = os.path.dirname(os.path.abspath(__file__))
+
+load_dotenv(os.path.join(path, '.env'))
+
 cfg = configparser.ConfigParser()
 config_path = os.path.join(path, 'config.conf')
 cfg.read(config_path, encoding='utf-8')
@@ -21,7 +26,20 @@ def get_config(key):
     return cfg.get('default', key, fallback=None)
 
 
-PREPARE_MAX_CONCURRENT = max(1, int(get_config("prepare_max_concurrent") or 2))
+def get_env_int(key: str) -> int | None:
+    raw = os.getenv(key)
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        return int(str(raw).strip())
+    except ValueError:
+        return None
+
+
+PREPARE_MAX_CONCURRENT = max(
+    1,
+    int(get_env_int('PREPARE_MAX_CONCURRENT') or get_config('prepare_max_concurrent') or 2),
+)
 
 
 def get_config_bool(key, default=False):
