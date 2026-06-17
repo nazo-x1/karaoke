@@ -15,8 +15,8 @@ async def preview_scan(root, duplicate_policy, validate):
     return await _library.preview_scan(root, duplicate_policy, validate)
 
 
-async def get_list(q: str = '', page: int = 1):
-    return await _library.get_list(q, page)
+async def get_list(q: str = '', page: int = 1, page_size: int = 0):
+    return await _library.get_list(q, page, page_size)
 
 
 async def delete_song(song_id, delete_disk=False):

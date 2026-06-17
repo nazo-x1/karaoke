@@ -142,11 +142,15 @@ class LibraryService:
         logger.info('%s 上传成功', filename)
         return ApiResult(msg=f'{filename} 上传成功', data=song.display_name)
 
-    async def get_list(self, q: str, page: int) -> ApiResult:
-        return await run_guarded('获取曲库列表失败', lambda: self._load_list(q, page))
+    async def get_list(self, q: str, page: int, page_size: int = 0) -> ApiResult:
+        return await run_guarded(
+            '获取曲库列表失败',
+            lambda: self._load_list(q, page, page_size),
+        )
 
-    async def _load_list(self, q: str, page: int) -> ApiResult:
-        songs, total_num = await self._songs.list_page(q, page)
+    async def _load_list(self, q: str, page: int, page_size: int = 0) -> ApiResult:
+        size = page_size if page_size > 0 else PAGE_SIZE
+        songs, total_num = await self._songs.list_page(q, page, size)
         active = self._prepare.active_tasks()
         result = ApiResult(
             data=[
@@ -154,7 +158,7 @@ class LibraryService:
                 for s in songs
             ],
         )
-        return apply_pagination(result, total_num, page, PAGE_SIZE)
+        return apply_pagination(result, total_num, page, size)
 
     async def delete_song(self, song_id: int, delete_disk: bool = False) -> ApiResult:
         async def action():

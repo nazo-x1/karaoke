@@ -40,11 +40,12 @@ class SongRepository:
     async def delete(self, song: Song) -> None:
         await song.delete()
 
-    async def list_page(self, q: str, page: int) -> tuple:
+    async def list_page(self, q: str, page: int, page_size: int = PAGE_SIZE) -> tuple:
         page = max(1, int(page))
+        page_size = max(1, min(int(page_size), 100))
         qs = Song.filter(display_name__contains=q) if q else Song.all()
         total_num = await qs.count()
-        songs = await qs.order_by('-id').offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+        songs = await qs.order_by('-id').offset((page - 1) * page_size).limit(page_size)
         return songs, total_num
 
     async def map_by_ids(self, ids: List[int]) -> dict:
