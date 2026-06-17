@@ -78,9 +78,8 @@ CONTENT_TYPE = {
     'wav': 'audio/wav',
 }
 
-log_path = os.path.join(path, 'logs')
-if not os.path.exists(log_path):
-    os.mkdir(log_path)
+log_path = get_config("log_path") or os.path.join(FILE_PATH, 'logs')
+os.makedirs(log_path, exist_ok=True)
 
 log_level = {
     'DEBUG': logging.DEBUG,
