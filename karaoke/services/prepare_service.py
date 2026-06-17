@@ -21,6 +21,7 @@ from karaoke.domain.prepare_policy import profile_needs_prepare
 from karaoke.infra.embedded import ensure_embedded_cache, probe_and_save_layout
 from karaoke.errors import format_api_error
 from karaoke.events.bus import event_bus
+from karaoke.infra.models import Song
 from karaoke.infra.repositories.song_repo import SongRepository
 from karaoke.infra.media import (
     browser_mp4_cache_path,
@@ -66,25 +67,30 @@ class PrepareTaskManager:
         self._running = 0
 
     async def schedule(self, song_id: int) -> dict:
+        async with self._lock:
+            existing = self._tasks.get(song_id)
+            if existing and existing.state in (PrepareState.PENDING, PrepareState.RUNNING):
+                return self._to_dict(existing)
+
         if await self._is_stream_ready(song_id):
             return await self.status(song_id)
 
         async with self._lock:
             existing = self._tasks.get(song_id)
-            if existing:
-                if existing.state in (PrepareState.PENDING, PrepareState.RUNNING):
-                    return self._to_dict(existing)
-                if existing.state in (PrepareState.READY, PrepareState.NOT_NEEDED):
-                    if await self._is_stream_ready(song_id):
-                        return self._to_dict(existing)
+            if existing and existing.state in (
+                PrepareState.READY,
+                PrepareState.NOT_NEEDED,
+                PrepareState.FAILED,
+            ):
                 del self._tasks[song_id]
 
             task = _PrepareTask(song_id=song_id)
             self._tasks[song_id] = task
             self._enqueue(song_id)
+            snapshot = self._to_dict(task)
 
         await self._pump_queue()
-        return self._to_dict(self._tasks[song_id])
+        return snapshot
 
     def active_tasks(self) -> Dict[int, dict]:
         return {
@@ -94,21 +100,12 @@ class PrepareTaskManager:
         }
 
     async def status(self, song_id: int) -> dict:
-        if await self._is_stream_ready(song_id):
-            return {
-                'song_id': song_id,
-                'status': PrepareState.READY.value,
-                'ready': True,
-                'phase': 'done',
-                'progress': 100.0,
-                'message': '播放资源已就绪',
-                'prepare_kind': 'none',
-                'error': None,
-            }
-
         task = self._tasks.get(song_id)
         if task:
             return self._to_dict(task)
+
+        if await self._is_stream_ready(song_id):
+            return self._ready_status(song_id)
 
         song = await self._songs.get_optional(song_id)
         if not song or not profile_needs_prepare(song):
@@ -187,6 +184,10 @@ class PrepareTaskManager:
         song = await self._songs.get_optional(song_id)
         if not song:
             return False
+        return await asyncio.to_thread(self._check_stream_ready_sync, song)
+
+    @staticmethod
+    def _check_stream_ready_sync(song: Song) -> bool:
         profile = resolve(song, prepare_embedded=False)
         if profile.playback_source == 'override':
             return True
@@ -198,6 +199,19 @@ class PrepareTaskManager:
             cached = browser_mp4_cache_path(profile.video_path)
             return os.path.isfile(cached) and _validate_browser_mp4(cached)
         return profile.can_queue
+
+    @staticmethod
+    def _ready_status(song_id: int) -> dict:
+        return {
+            'song_id': song_id,
+            'status': PrepareState.READY.value,
+            'ready': True,
+            'phase': 'done',
+            'progress': 100.0,
+            'message': '播放资源已就绪',
+            'prepare_kind': 'none',
+            'error': None,
+        }
 
     async def _run(self, task: _PrepareTask) -> None:
         task.state = PrepareState.RUNNING
