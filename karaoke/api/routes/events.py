@@ -1,4 +1,5 @@
 import asyncio
+import json
 import traceback
 
 from fastapi import Request, Body
@@ -9,6 +10,8 @@ from karaoke.services.playback_service import PlaybackService
 from settings import logger
 
 _playback = PlaybackService()
+
+_HEARTBEAT_PAYLOAD = json.dumps({'code': 0, 'data': 'heartbeat'}, ensure_ascii=False)
 
 
 async def sse_events(request: Request):
@@ -25,7 +28,7 @@ async def sse_events(request: Request):
                     )
                     yield {'data': message}
                 except asyncio.TimeoutError:
-                    yield {'comment': 'heartbeat'}
+                    yield {'data': _HEARTBEAT_PAYLOAD}
         except Exception:
             logger.error(traceback.format_exc())
         finally:

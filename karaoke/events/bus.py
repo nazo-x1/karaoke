@@ -11,7 +11,7 @@ from typing import List
 from settings import logger
 
 CLIENT_QUEUE_MAXSIZE = 64
-HEARTBEAT_INTERVAL = 30.0
+HEARTBEAT_INTERVAL = 15.0
 
 
 class EventCode(IntEnum):
