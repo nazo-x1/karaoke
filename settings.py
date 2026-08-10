@@ -72,8 +72,39 @@ os.makedirs(OVERRIDE_PATH, exist_ok=True)
 PLAY_CACHE_PATH = os.path.join(FILE_PATH, '__play_cache__')
 os.makedirs(PLAY_CACHE_PATH, exist_ok=True)
 
+
+def build_database_url() -> str:
+    """优先 DATABASE_URL，其次 POSTGRES_*，最后回退 SQLite（本地开发）。"""
+    url = (os.getenv('DATABASE_URL') or '').strip()
+    if url:
+        return url
+
+    pg_host = (os.getenv('POSTGRES_HOST') or '').strip()
+    if pg_host:
+        pg_port = (os.getenv('POSTGRES_PORT') or '5432').strip()
+        pg_user = (os.getenv('POSTGRES_USER') or 'karaoke').strip()
+        pg_password = (os.getenv('POSTGRES_PASSWORD') or 'karaoke').strip()
+        pg_db = (os.getenv('POSTGRES_DB') or 'karaoke').strip()
+        return f'postgres://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}'
+
+    return f'sqlite://{FILE_PATH}/sqlite3.db'
+
+
+DATABASE_URL = build_database_url()
+
+
+def is_postgres_url(url: str) -> bool:
+    return url.startswith('postgres://') or url.startswith('postgresql://')
+
+
+def postgres_dsn(url: str) -> str:
+    if url.startswith('postgres://'):
+        return url.replace('postgres://', 'postgresql://', 1)
+    return url
+
+
 TORTOISE_ORM = {
-    "connections": {"default": f"sqlite://{FILE_PATH}/sqlite3.db"},
+    "connections": {"default": DATABASE_URL},
     "apps": {
         "models": {
             "models": ["karaoke.infra.models", "aerich.models"],

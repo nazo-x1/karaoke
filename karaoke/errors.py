@@ -33,6 +33,16 @@ def format_api_error(exc: Exception, action: str = "操作失败") -> str:
             return f"{action}：数据库表缺失，请重启服务初始化"
         return f"{action}：数据库访问异常"
 
+    text = str(exc).strip().lower()
+    if "undefined column" in text or "no such column" in text:
+        return f"{action}：数据库字段不完整，请重启服务以自动迁移"
+    if "undefined table" in text or "no such table" in text or (
+        "relation" in text and "does not exist" in text
+    ):
+        return f"{action}：数据库表缺失，请重启服务初始化"
+    if exc.__class__.__name__ in ('PostgresError', 'OperationalError'):
+        return f"{action}：数据库访问异常"
+
     if isinstance(exc, (OSError, PermissionError)):
         text = str(exc).strip()
         if text:

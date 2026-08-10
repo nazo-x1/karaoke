@@ -13,7 +13,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     KTV_PATH=/KTV \
-    PORT=15233
+    PORT=15233 \
+    DATABASE_URL=sqlite:///tmp/aerich-build.db
 
 RUN if [ -n "$APT_MIRROR" ]; then \
       sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources && \
@@ -34,9 +35,10 @@ RUN if [ -n "$PIP_INDEX_URL" ]; then \
 
 COPY . /app/
 
-RUN mkdir -p "${KTV_PATH}" /work \
+RUN mkdir -p "${KTV_PATH}" /tmp /work \
     && sed -i 's/^# host = 0.0.0.0/host = 0.0.0.0/' config.conf \
     && aerich init -t settings.TORTOISE_ORM \
+    && aerich init-db \
     && chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 15233
