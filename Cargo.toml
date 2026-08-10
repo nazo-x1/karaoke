@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/domain",
+    "crates/infra",
+    "crates/events",
+    "crates/jobs",
+    "crates/services",
+    "crates/api",
+    "crates/app",
+]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+thiserror = "1"
+anyhow = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+sqlx = { version = "0.7", features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "chrono",
+    "json",
+    "migrate",
+] }
+axum = { version = "0.7", features = ["multipart"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs", "trace", "cors"] }
+minijinja = "1"
+
+karaoke-domain = { path = "crates/domain" }
+karaoke-infra = { path = "crates/infra" }
+karaoke-events = { path = "crates/events" }
+karaoke-jobs = { path = "crates/jobs" }
+karaoke-services = { path = "crates/services" }
+karaoke-api = { path = "crates/api" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "unwind"

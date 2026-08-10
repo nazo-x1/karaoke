@@ -25,7 +25,7 @@ services:
     volumes:
       - karaoke-data:/KTV
     environment:
-      - FORCE_DB_RESET=0
+      - PREPARE_MAX_CONCURRENT=${PREPARE_MAX_CONCURRENT:-2}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER:-karaoke}
@@ -35,6 +35,12 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:15233/api/v1/system/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   karaoke-data:

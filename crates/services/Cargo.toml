@@ -1,0 +1,24 @@
+[package]
+name = "karaoke-services"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+karaoke-domain = { workspace = true }
+karaoke-infra = { workspace = true }
+karaoke-events = { workspace = true }
+karaoke-jobs = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+urlencoding = "2"
+
+[lib]
+name = "karaoke_services"
+path = "src/lib.rs"

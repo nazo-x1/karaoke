@@ -1,0 +1,29 @@
+[package]
+name = "karaoke-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+karaoke-domain = { workspace = true }
+karaoke-infra = { workspace = true }
+karaoke-events = { workspace = true }
+karaoke-jobs = { workspace = true }
+karaoke-services = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+minijinja = { workspace = true }
+async-stream = "0.3"
+futures = "0.3"
+bytes = "1"
+mime_guess = "2"
+urlencoding = "2"
+
+[dev-dependencies]
+serde_urlencoded = "0.7"

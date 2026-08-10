@@ -1,0 +1,28 @@
+[package]
+name = "karaoke-infra"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+karaoke-domain = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
+regex = "1"
+once_cell = "1"
+bytes = "1"
+futures = "0.3"
+async-stream = "0.3"
+toml = "0.8"
+
+[lib]
+name = "karaoke_infra"
+path = "src/lib.rs"

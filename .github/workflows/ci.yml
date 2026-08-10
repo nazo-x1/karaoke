@@ -3,13 +3,13 @@ name: CI/CD
 on:
   push:
     branches: [master, main]
-    tags: ['v*']
+    tags: ["v*"]
   pull_request:
     branches: [master, main]
   workflow_dispatch:
 
 concurrency:
-  group: karaoke-app-${{ github.workflow }}-${{ github.ref }}
+  group: karaoke-server-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -19,6 +19,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  CARGO_TERM_COLOR: always
 
 jobs:
   test:
@@ -27,16 +28,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: '3.12'
+          components: rustfmt, clippy
 
-      - name: Install dependencies
-        run: pip install --no-cache-dir -r requirements.txt
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
 
-      - name: Compile check
-        run: python -m compileall -q karaoke main.py
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
 
   docker:
     runs-on: ubuntu-latest

@@ -1,0 +1,25 @@
+[package]
+name = "karaoke-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "karaoke-server"
+path = "src/main.rs"
+
+[dependencies]
+karaoke-domain = { workspace = true }
+karaoke-infra = { workspace = true }
+karaoke-events = { workspace = true }
+karaoke-jobs = { workspace = true }
+karaoke-services = { workspace = true }
+karaoke-api = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+sqlx = { workspace = true }
+toml = "0.8"
