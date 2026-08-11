@@ -1,8 +1,8 @@
-//! 曲库服务：上传/扫描导入/列表/删除。对应 Python `karaoke/services/library_service.py`。
+//! 曲库服务：严格单曲上传 / 宽松扫描导入 / 列表 / 删除。
 
 use crate::dto::{db_error_message, ApiResult};
 use crate::mappers::song_item;
-use karaoke_infra::media::MediaSettings;
+use karaoke_infra::media::{preflight_media, MediaSettings};
 use karaoke_infra::repositories::song_repo::PAGE_SIZE;
 use karaoke_infra::repositories::SongRepository;
 use karaoke_infra::scanner::{run_validate_paths, scan_root, ScanOptions, ScanTaskManager};
@@ -11,6 +11,7 @@ use karaoke_jobs::PrepareTaskManager;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct LibraryService {
@@ -45,6 +46,7 @@ fn stem(filename: &str) -> String {
 }
 
 impl LibraryService {
+    /// 严格单曲上传：临时落盘 → 预检必须可播 → 再写入 `__keep__` 并建库；失败零残留。
     pub async fn upload_file(
         &self,
         filename: &str,
@@ -60,31 +62,98 @@ impl LibraryService {
             return ApiResult::fail_with_data(format!("不支持的格式: {ext}"), &filename);
         }
 
+        let tmp_name = format!(".upload_tmp_{}_{}", Uuid::new_v4(), filename);
+        let tmp_path = self.keep_path.join(&tmp_name);
+        if let Err(e) = tokio::fs::write(&tmp_path, &bytes).await {
+            return ApiResult::fail_with_data(
+                format!("{filename} 写入临时文件失败：{e}"),
+                &filename,
+            );
+        }
+
+        let result = self
+            .commit_strict_file(&filename, &tmp_path, duplicate_policy, true)
+            .await;
+        // rename 成功后临时文件已不存在；跳过/失败时清掉残留
+        if tmp_path.is_file() {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+        }
+        result
+    }
+
+    /// 工坊成品入库：从已有路径严格预检并拷入 `__keep__`。
+    pub async fn upload_strict_from_path(
+        &self,
+        filename: &str,
+        source: &Path,
+        duplicate_policy: Option<&str>,
+    ) -> ApiResult {
+        let filename = safe_filename(filename);
+        if filename.is_empty() {
+            return ApiResult::fail("未选择文件");
+        }
+        let ext = karaoke_domain::file_ext(&filename);
+        if !self.scan_video_exts.contains(&ext) {
+            return ApiResult::fail_with_data(format!("不支持的格式: {ext}"), &filename);
+        }
+        if !source.is_file() {
+            return ApiResult::fail("成品文件不存在");
+        }
+        self.commit_strict_file(&filename, source, duplicate_policy, false)
+            .await
+    }
+
+    async fn commit_strict_file(
+        &self,
+        filename: &str,
+        source_path: &Path,
+        duplicate_policy: Option<&str>,
+        move_source: bool,
+    ) -> ApiResult {
+        let pf = preflight_media(&self.media, &source_path.to_string_lossy()).await;
+        if !pf.playable {
+            return ApiResult::fail_with_data(
+                format!("{filename} 不可播放，已拒绝入库"),
+                json_preflight(&pf),
+            );
+        }
+
         let policy = duplicate_policy
             .unwrap_or(&self.default_duplicate_policy)
             .to_string();
-        let display_base = stem(&filename);
-        let mut dest_path = self.keep_path.join(&filename);
+        let display_base = stem(filename);
+        let mut dest_path = self.keep_path.join(filename);
 
         match self
-            .save_upload(&filename, &display_base, &mut dest_path, &policy, bytes)
+            .persist_strict(
+                filename,
+                &display_base,
+                source_path,
+                &mut dest_path,
+                &policy,
+                &pf,
+                move_source,
+            )
             .await
         {
             Ok(result) => result,
             Err(e) => {
-                tracing::error!("upload {filename} failed: {e:?}");
-                ApiResult::fail_with_data(format!("{filename} 上传失败：{e}"), &filename)
+                tracing::error!("strict upload {filename} failed: {e:?}");
+                ApiResult::fail_with_data(format!("{filename} 上传失败：{e}"), filename)
             }
         }
     }
 
-    async fn save_upload(
+    #[allow(clippy::too_many_arguments)]
+    async fn persist_strict(
         &self,
         filename: &str,
         display_base: &str,
+        source_path: &Path,
         dest_path: &mut PathBuf,
         policy: &str,
-        bytes: Vec<u8>,
+        pf: &karaoke_infra::media::PreflightResult,
+        move_source: bool,
     ) -> anyhow::Result<ApiResult> {
         let existing = self
             .songs
@@ -127,15 +196,24 @@ impl LibraryService {
             }
         }
 
-        tokio::fs::write(&dest_path, &bytes).await?;
+        // 落到最终路径
+        if source_path != dest_path.as_path() {
+            if let Some(parent) = dest_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            if move_source {
+                if let Err(e) = tokio::fs::rename(source_path, &dest_path).await {
+                    // 跨文件系统 rename 失败时回退 copy+remove
+                    tracing::warn!("rename upload tmp failed, copy instead: {e}");
+                    tokio::fs::copy(source_path, &dest_path).await?;
+                    let _ = tokio::fs::remove_file(source_path).await;
+                }
+            } else {
+                tokio::fs::copy(source_path, &dest_path).await?;
+            }
+        }
 
-        let is_playable = if self.ffprobe_on_import {
-            karaoke_infra::media::probe_video_playable(&self.media, &dest_path.to_string_lossy())
-                .await
-        } else {
-            true
-        };
-
+        let is_playable = true;
         let song = if let Some(existing) = existing {
             self.songs
                 .update_upload_fields(existing.id, &display_name, is_playable, "upload")
@@ -175,11 +253,7 @@ impl LibraryService {
                 .await?
         };
 
-        if self.ffprobe_on_import {
-            let layout =
-                karaoke_infra::embedded::probe_layout(&self.media, &song.source_path, "auto").await;
-            self.songs.update_audio_layout(song.id, &layout).await?;
-        }
+        self.songs.update_audio_layout(song.id, &pf.layout).await?;
         let song = self.songs.get(song.id).await?;
         let profile = self.resolver.resolve(&song).await;
         self.songs
@@ -191,15 +265,14 @@ impl LibraryService {
             )
             .await?;
 
-        // 上传后自动预热双轨音频抽取（plain 无需 prepare）。
         if self.resolver.needs_prepare(&song, &profile).await {
             let _ = self.prepare.schedule(song.id).await;
         }
 
-        tracing::info!("{filename} 上传成功");
+        tracing::info!("{filename} 严格上传成功 (mode_hint={})", pf.mode_hint);
         Ok(ApiResult::ok_msg_data(
             format!("{filename} 上传成功"),
-            &song.display_name,
+            json_upload_ok(&song.display_name, pf),
         ))
     }
 
@@ -251,7 +324,6 @@ impl LibraryService {
             duplicate_policy: duplicate_policy
                 .unwrap_or(&self.default_duplicate_policy)
                 .to_string(),
-            // 正式扫描：落库先行，校验后台跑。
             validate: want_validate,
             dry_run: false,
         };
@@ -275,7 +347,6 @@ impl LibraryService {
                         run_validate_paths(&media, &songs, &tasks, paths).await;
                     });
                 }
-                // 扫描后预热双轨歌曲。
                 self.warmup_needing_prepare().await;
                 let msg = if want_validate {
                     "扫描落库完成，校验在后台进行"
@@ -351,4 +422,24 @@ impl LibraryService {
             }
         }
     }
+}
+
+fn json_preflight(pf: &karaoke_infra::media::PreflightResult) -> serde_json::Value {
+    serde_json::json!({
+        "playable": pf.playable,
+        "mode_hint": pf.mode_hint,
+        "suggestion": pf.suggestion,
+    })
+}
+
+fn json_upload_ok(
+    display_name: &str,
+    pf: &karaoke_infra::media::PreflightResult,
+) -> serde_json::Value {
+    serde_json::json!({
+        "display_name": display_name,
+        "playable": pf.playable,
+        "mode_hint": pf.mode_hint,
+        "suggestion": pf.suggestion,
+    })
 }

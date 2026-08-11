@@ -5,6 +5,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-karaoke}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-karaoke}
       POSTGRES_DB: ${POSTGRES_DB:-karaoke}
+      # Used by docker/postgres/init-separator-db.sh when present (dedicated DB)
+      SEPARATOR_POSTGRES_DB: ${SEPARATOR_POSTGRES_DB:-separator}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -31,6 +33,11 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-karaoke}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-karaoke}
       - POSTGRES_DB=${POSTGRES_DB:-karaoke}
+      # 工坊 AI（默认关闭；启用需另起 separator，见仓库外/根 compose profile）
+      - SEPARATOR_ENABLED=${SEPARATOR_ENABLED:-false}
+      - SEPARATOR_BASE_URL=${SEPARATOR_BASE_URL:-http://separator:8080}
+      - SEPARATOR_API_TOKEN=${SEPARATOR_API_TOKEN:-}
+      - SEPARATOR_CALLBACK_BASE_URL=${SEPARATOR_CALLBACK_BASE_URL:-http://karaoke:15233}
     depends_on:
       postgres:
         condition: service_healthy

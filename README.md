@@ -20,12 +20,27 @@ karaoke-app       主程序：配置/tracing/装配/启动 HTTP 服务
 
 ## 播放模型
 
-- **plain**：单轨源文件，默认直发；客户端（Android ExoPlayer / 浏览器）解码失败时调用
+- **plain（普通）**：单轨源文件，默认直发；客户端解码失败时调用
   `POST /api/v1/playback/songs/{id}/report-unplayable`，服务端跳过当前曲并强制后台生成
   `__play_cache__` 兜底 mp4；下次点歌若缓存就绪则自动走缓存。
-- **embedded（双轨）**：源文件含原唱/伴奏两路音频时进入增强模式。视频同样默认直发源文件；
-  prepare 只抽取两路小音频文件（兼容编码时 `-c:a copy`），避免三个播放器重复读大文件。
-- 已移除 `__override__` 三件套。旧数据请手动 remux 成单个双轨文件后迁入曲库（无需 DB 迁移）。
+- **embedded（增强）**：源容器已含原唱/伴奏双音轨时进入增强模式。视频直发源文件；
+  prepare 只抽取两路音频缓存到 `__play_cache__/embedded/`。
+- 曲库一等公民只有**单个视频源文件**。AI 分轨与「视频+双音频」组装只在**上传编辑页（工坊）**完成，
+  再严格入库；库内歌曲无 AI/组装/侧车三文件入口。
+- 扫描跳过目录：`__keep__`、`__workshop__`、`__play_cache__`。
+
+## 导入与工坊
+
+| 入口 | 行为 |
+|------|------|
+| `POST /library/upload` | **严格**单曲上传：临时落盘 → 预检必须可播 → 写入 `__keep__`+建行；失败零残留 |
+| `POST /library/scan` | **宽松**扫描：可关校验、可先录入后验失败文件 |
+| `/workshop` + `/api/v1/workshop/*` | 临时会话：预检 / 组装 / AI 分轨 → 成品 → `commit` 严格入库 |
+
+工坊 AI 依赖独立 [separator](../separator/README.md) 服务，由 `[separator] enabled`（或环境变量
+`SEPARATOR_ENABLED`）门控。未启用时隐藏 AI，预检与组装仍可用。
+
+`GET /api/v1/system/features` 返回 `separator_enabled` 等前端开关。
 
 ## 本地开发
 
@@ -51,9 +66,21 @@ cargo run -p karaoke-app
 - `transcode_max_height`：兜底转码分辨率上限（默认 1080）
 - `probe_size` / `analyze_duration`：ffprobe 探测上限
 - `scan_validate_concurrency`：扫描校验并发（默认 2）
+- `[separator]` / `SEPARATOR_ENABLED`、`SEPARATOR_BASE_URL`、`SEPARATOR_API_TOKEN`、
+  `SEPARATOR_CALLBACK_BASE_URL`：工坊 AI 对接（默认关闭）
+- `[workshop]`：临时目录名与会话 TTL
 
 扫描：`POST /library/scan` 先落库后返回；若开启校验，ffprobe 在后台跑，进度见
 `GET /library/scan/status`（`total`/`done`/`invalid`/`running`）。
+
+启用 separator 示例：
+
+```bash
+# 根目录
+export SEPARATOR_API_TOKEN=change-me
+export SEPARATOR_ENABLED=true
+docker compose --profile separator up -d --build
+```
 
 ## 数据库迁移
 

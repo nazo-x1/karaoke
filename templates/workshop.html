@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>上传编辑页（工坊）</title>
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="/static/css/toast.style.css">
+    <script type="text/javascript" src="/static/js/jq.min.js"></script>
+    <script type="text/javascript" src="/static/js/toast.script.js"></script>
+    <style>
+        body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #f7f7f7; }
+        .wrap { max-width: 820px; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }
+        h1 { margin: 0 0 .5rem; font-size: 1.4rem; }
+        .sub { color: #666; margin-bottom: 1.25rem; line-height: 1.5; }
+        .card { background: #fff; border: 1px solid #e5e5e5; border-radius: 8px; padding: 1rem 1.15rem; margin-bottom: 1rem; }
+        .card h2 { margin: 0 0 .75rem; font-size: 1.05rem; }
+        .hint { font-size: .9rem; color: #666; line-height: 1.5; margin: .5rem 0; }
+        label { display: block; margin: .6rem 0 .25rem; font-weight: 600; font-size: .9rem; }
+        input[type=file], select { width: 100%; box-sizing: border-box; }
+        .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; margin-top: .75rem; }
+        button, .linkish { cursor: pointer; }
+        button { padding: .45rem .9rem; }
+        .status { padding: .75rem; background: #fafafa; border-radius: 4px; font-size: .9rem; line-height: 1.55; }
+        .status strong { color: #1565c0; }
+        .hidden { display: none !important; }
+        a { color: #1565c0; }
+        .modal_cover { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 1000; align-items: center; justify-content: center; }
+        .modal_cover.show { display: flex; }
+        .modal_gif { color: #fff; font-size: 1rem; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <h1>上传编辑页</h1>
+    <p class="sub">临时工坊：预检 / 组装双轨 / AI 分轨（可选）。确认后再严格入库；过程不写曲库。</p>
+    <p><a href="{{ prefix }}/">← 返回曲库</a></p>
+
+    <div class="card">
+        <h2>会话</h2>
+        <div class="status" id="session-status">尚未创建会话</div>
+        <div class="row">
+            <button type="button" id="btn-create">创建会话</button>
+            <button type="button" id="btn-refresh">刷新状态</button>
+            <button type="button" id="btn-discard">放弃会话</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>1. 视频预检</h2>
+        <p class="hint">上传后检测是否可播，以及是否已是普通/增强双轨。</p>
+        <label for="preflight-file">视频文件</label>
+        <input id="preflight-file" type="file" accept="video/*,.mp4,.mkv,.avi,.mov,.webm,.m4v">
+        <div class="row">
+            <button type="button" id="btn-preflight">运行预检</button>
+        </div>
+        <div class="hint" id="preflight-result"></div>
+    </div>
+
+    <div class="card">
+        <h2>2. 音频组装（不依赖 Separator）</h2>
+        <p class="hint">视频 + 原唱音频 + 伴奏音频 → 单个双轨容器成品。</p>
+        <label for="assemble-video">视频</label>
+        <input id="assemble-video" type="file" accept="video/*,.mp4,.mkv,.avi,.mov,.webm,.m4v">
+        <label for="assemble-vocals">原唱音频</label>
+        <input id="assemble-vocals" type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.flac">
+        <label for="assemble-accomp">伴奏音频</label>
+        <input id="assemble-accomp" type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.flac">
+        <div class="row">
+            <button type="button" id="btn-assemble">组装双轨成品</button>
+        </div>
+    </div>
+
+    <div class="card" id="ai-card">
+        <h2>3. AI 分轨</h2>
+        <p class="hint" id="ai-hint">上传普通视频，抽取混音后调用 Separator，再 remux 为临时双轨容器。</p>
+        <label for="ai-video">视频</label>
+        <input id="ai-video" type="file" accept="video/*,.mp4,.mkv,.avi,.mov,.webm,.m4v">
+        <div class="row">
+            <button type="button" id="btn-ai">开始 AI 分轨</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>4. 严格入库</h2>
+        <p class="hint">对工坊成品执行与曲库「严格上传」相同门禁；成功后销毁会话。</p>
+        <label for="commit-policy">去重策略</label>
+        <select id="commit-policy">
+            <option value="skip">跳过已存在</option>
+            <option value="rename">重命名</option>
+            <option value="overwrite">覆盖</option>
+        </select>
+        <div class="row">
+            <button type="button" id="btn-commit">确认入库</button>
+        </div>
+    </div>
+</div>
+<div class="modal_cover" id="busy"><div class="modal_gif">处理中…</div></div>
+<script>
+    localStorage.setItem("server", "{{ prefix }}");
+</script>
+<script src="/static/js/core/config.js"></script>
+<script src="/static/js/core/http.js"></script>
+<script src="/static/js/domains/workshop.js"></script>
+<script src="/static/js/pages/workshop.page.js"></script>
+</body>
+</html>

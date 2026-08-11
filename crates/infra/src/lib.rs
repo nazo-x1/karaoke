@@ -9,8 +9,12 @@ pub mod models;
 pub mod playback_resolver;
 pub mod repositories;
 pub mod scanner;
+pub mod separator_client;
 pub mod streaming;
+pub mod workshop;
 
 pub use config::AppConfig;
 pub use media::MediaSettings;
 pub use playback_resolver::PlaybackResolver;
+pub use separator_client::{SeparatorClient, SeparatorError, SeparatorJobStatus};
+pub use workshop::{WorkshopPreflight, WorkshopSessionMeta, WorkshopStatus, WorkshopStore};

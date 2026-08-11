@@ -1,4 +1,4 @@
-//! 页面路由：首页 / 遥控播放页 / 歌曲编辑页。对应 Python `main.py` 中的三个模板路由。
+//! 页面路由：首页 / 遥控播放页 / 歌曲编辑页 / 上传编辑页（工坊）。
 
 use crate::state::AppState;
 use axum::extract::{Path, State};
@@ -34,4 +34,8 @@ pub async fn song_edit_page(State(state): State<AppState>, Path(song_id): Path<i
         "song_edit.html",
         context! { prefix => "", song_id => song_id },
     )
+}
+
+pub async fn workshop_page(State(state): State<AppState>) -> Response {
+    render(&state, "workshop.html", context! { prefix => "" })
 }

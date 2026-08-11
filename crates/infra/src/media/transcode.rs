@@ -462,6 +462,115 @@ pub async fn extract_audio_track(
     }
 }
 
+/// 从视频抽出混合音频（供 Separator 上传）；优先 wav PCM，兼容性最好。
+pub async fn extract_mix_audio(settings: &MediaSettings, source: &str, dest: &Path) -> bool {
+    if let Some(parent) = dest.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    let info = probe_media_info(settings, source).await;
+    let duration = info
+        .as_ref()
+        .and_then(|i| (i.duration > 0.0).then_some(i.duration));
+    let mut args: Vec<String> = [
+        "-y",
+        "-nostdin",
+        "-i",
+        source,
+        "-vn",
+        "-ac",
+        "2",
+        "-ar",
+        "44100",
+        "-c:a",
+        "pcm_s16le",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
+    args.push(dest.to_string_lossy().to_string());
+
+    let result =
+        run_ffmpeg_with_progress(settings, args, duration, None, settings.transcode_timeout).await;
+    match result {
+        Ok(()) => dest.is_file() && dest.metadata().map(|m| m.len() > 0).unwrap_or(false),
+        Err(e) => {
+            warn!("mix audio extract failed {source}: {e}");
+            remove_if_exists(dest).await;
+            false
+        }
+    }
+}
+
+/// 视频 + 原唱音频 + 伴奏音频 → 单个双轨容器（轨标题可识别角色）。
+pub async fn remux_dual_container(
+    settings: &MediaSettings,
+    video: &str,
+    vocals: &str,
+    accompaniment: &str,
+    dest: &Path,
+) -> bool {
+    if let Some(parent) = dest.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    let streams = crate::media::probe_streams(settings, video).await;
+    let Some(v) = karaoke_domain::media::pick_main_video_stream(&streams) else {
+        warn!("remux_dual_container: no video stream in {video}");
+        return false;
+    };
+    let info = probe_media_info(settings, video).await;
+    let duration = info
+        .as_ref()
+        .and_then(|i| (i.duration > 0.0).then_some(i.duration));
+
+    let args = vec![
+        "-y".to_string(),
+        "-nostdin".to_string(),
+        "-i".to_string(),
+        video.to_string(),
+        "-i".to_string(),
+        vocals.to_string(),
+        "-i".to_string(),
+        accompaniment.to_string(),
+        "-map".to_string(),
+        format!("0:{}", v.index),
+        "-map".to_string(),
+        "1:a:0".to_string(),
+        "-map".to_string(),
+        "2:a:0".to_string(),
+        "-c:v".to_string(),
+        "copy".to_string(),
+        "-c:a".to_string(),
+        "aac".to_string(),
+        "-b:a".to_string(),
+        "192k".to_string(),
+        "-ac".to_string(),
+        "2".to_string(),
+        "-metadata:s:a:0".to_string(),
+        "title=原唱".to_string(),
+        "-metadata:s:a:1".to_string(),
+        "title=伴奏".to_string(),
+        "-shortest".to_string(),
+        dest.to_string_lossy().to_string(),
+    ];
+
+    let result =
+        run_ffmpeg_with_progress(settings, args, duration, None, settings.transcode_timeout).await;
+    match result {
+        Ok(()) => {
+            let ok = dest.is_file() && dest.metadata().map(|m| m.len() > 0).unwrap_or(false);
+            if !ok {
+                remove_if_exists(dest).await;
+            }
+            ok
+        }
+        Err(e) => {
+            warn!("remux_dual_container failed: {e}");
+            remove_if_exists(dest).await;
+            false
+        }
+    }
+}
+
 /// 音轨布局哈希（源文件指纹 + layout 内容），对应 Python `_layout_hash`。
 pub fn embedded_cache_dir(
     settings: &MediaSettings,

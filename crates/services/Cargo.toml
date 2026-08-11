@@ -18,6 +18,8 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 urlencoding = "2"
+uuid = { workspace = true }
+reqwest = { workspace = true }
 
 [lib]
 name = "karaoke_services"

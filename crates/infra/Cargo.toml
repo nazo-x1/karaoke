@@ -22,6 +22,8 @@ bytes = "1"
 futures = "0.3"
 async-stream = "0.3"
 toml = "0.8"
+reqwest = { workspace = true }
+uuid = { workspace = true }
 
 [lib]
 name = "karaoke_infra"

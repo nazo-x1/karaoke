@@ -38,3 +38,22 @@ analyze_duration = 2000000
 
 # 扫描校验阶段的有限并发（机械盘建议 2）。
 scan_validate_concurrency = 2
+
+# Separator（独立分音服务）。默认关闭；启用后工坊可 AI 分轨。
+# 环境变量可覆盖：SEPARATOR_ENABLED / SEPARATOR_BASE_URL / SEPARATOR_API_TOKEN /
+# SEPARATOR_CALLBACK_BASE_URL / SEPARATOR_DEFAULT_MODEL
+[separator]
+enabled = false
+base_url = "http://separator:8080"
+api_token = ""
+# 供 webhook 回调；空则工坊仅轮询。compose 内可设 http://karaoke:15233
+callback_base_url = ""
+default_model = ""
+max_concurrent = 1
+request_timeout_secs = 60
+job_timeout_secs = 3600
+
+# 上传编辑页（工坊）临时会话目录与 TTL。
+[workshop]
+dir_name = "__workshop__"
+session_ttl_secs = 86400

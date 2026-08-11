@@ -65,9 +65,10 @@
     <label>内嵌音轨映射</label>
     <div class="track-section">
         <div class="hint" style="margin-top:0;">
-            映射双音轨（原唱/伴奏）后进入增强模式；视频默认直发源文件，仅抽取两路音频缓存。
-            若设备解码失败，客户端会上报并后台生成兜底 mp4，下次点歌自动命中缓存。
-            旧 <code>__override__</code> 三件套请手动 remux 成单个双轨文件后迁入曲库。
+            库内编辑仅支持音轨角色映射与双轨音频准备。映射原唱/伴奏后进入增强模式；
+            prepare 只抽取两路音频缓存，视频仍直发源文件。
+            需要 AI 分轨或「视频+双音频」组装时，请到曲库的「上传编辑页」处理后再严格入库。
+            单轨歌曲不会升级为增强。
         </div>
         <table class="track-table" id="track-table" style="display:none;">
             <thead>

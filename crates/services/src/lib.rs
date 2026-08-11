@@ -1,5 +1,5 @@
-//! 应用服务编排层：镜像 Python 版 5 个业务服务边界
-//! （library/queue/playback/song_config/cache），组合 domain + infra + events + jobs。
+//! 应用服务编排层：镜像 Python 版业务服务边界
+//! （library/queue/playback/song_config/cache/workshop），组合 domain + infra + events + jobs。
 
 pub mod cache_service;
 pub mod dto;
@@ -8,6 +8,7 @@ pub mod mappers;
 pub mod playback_service;
 pub mod queue_service;
 pub mod song_config_service;
+pub mod workshop_service;
 
 pub use cache_service::CacheService;
 pub use dto::ApiResult;
@@ -15,11 +16,12 @@ pub use library_service::LibraryService;
 pub use playback_service::{PlaybackService, StreamOutcome};
 pub use queue_service::QueueService;
 pub use song_config_service::SongConfigService;
+pub use workshop_service::WorkshopService;
 
 use karaoke_events::EventBus;
 use karaoke_infra::repositories::{HistoryRepository, SongRepository};
 use karaoke_infra::scanner::ScanTaskManager;
-use karaoke_infra::{AppConfig, MediaSettings, PlaybackResolver};
+use karaoke_infra::{AppConfig, MediaSettings, PlaybackResolver, WorkshopStore};
 use karaoke_jobs::PrepareTaskManager;
 use sqlx::PgPool;
 use std::collections::HashSet;
@@ -33,6 +35,7 @@ pub struct AppServices {
     pub playback: PlaybackService,
     pub song_config: SongConfigService,
     pub cache: CacheService,
+    pub workshop: WorkshopService,
     pub events: EventBus,
     pub config: Arc<AppConfig>,
 }
@@ -60,7 +63,7 @@ impl AppServices {
         let scan_tasks = ScanTaskManager::new();
 
         let scan_video_exts: HashSet<String> = config.scan_video_exts.iter().cloned().collect();
-        let skip_dir_names: HashSet<String> = [config.keep_dir_name.clone()].into_iter().collect();
+        let skip_dir_names = config.scan_skip_dir_names();
 
         let library = LibraryService {
             songs: songs.clone(),
@@ -74,6 +77,18 @@ impl AppServices {
             default_duplicate_policy: config.default_duplicate_policy.clone(),
             ffprobe_on_import: config.ffprobe_on_import,
         };
+
+        let workshop_store = WorkshopStore::new(
+            config.workshop_path.clone(),
+            config.workshop.session_ttl_secs,
+        );
+        let workshop = WorkshopService::new(
+            workshop_store,
+            media.clone(),
+            library.clone(),
+            config.separator.clone(),
+        );
+
         let queue = QueueService {
             songs: songs.clone(),
             histories: histories.clone(),
@@ -107,6 +122,7 @@ impl AppServices {
             playback,
             song_config,
             cache,
+            workshop,
             events,
             config,
         }
@@ -116,5 +132,22 @@ impl AppServices {
         self.queue.init_on_startup().await;
         // 启动期补偿：为未就绪的双轨歌曲调度音频抽取预热。
         self.library.warmup_needing_prepare().await;
+        // 清理过期工坊会话
+        let removed = self.workshop.store.cleanup_expired().await;
+        if removed > 0 {
+            tracing::info!(removed, "cleaned expired workshop sessions");
+        }
+        // 后台定期清理
+        let workshop = self.workshop.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                let n = workshop.store.cleanup_expired().await;
+                if n > 0 {
+                    tracing::info!(removed = n, "workshop TTL cleanup");
+                }
+            }
+        });
     }
 }

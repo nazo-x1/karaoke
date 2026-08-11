@@ -95,12 +95,39 @@ pub fn build_router(
             "/system/play-cache/clear",
             post(routes::system::clear_play_cache),
         )
-        .route("/system/health", get(health));
+        .route("/system/features", get(routes::system::features))
+        .route("/system/health", get(health))
+        .route("/workshop/sessions", post(routes::workshop::create_session))
+        .route(
+            "/workshop/sessions/:session_id",
+            get(routes::workshop::get_session).delete(routes::workshop::destroy_session),
+        )
+        .route(
+            "/workshop/sessions/:session_id/preflight",
+            post(routes::workshop::preflight).layer(DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/workshop/sessions/:session_id/assemble",
+            post(routes::workshop::assemble).layer(DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/workshop/sessions/:session_id/ai-separate",
+            post(routes::workshop::ai_separate).layer(DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/workshop/sessions/:session_id/commit",
+            post(routes::workshop::commit),
+        )
+        .route(
+            "/internal/workshop-separation-callback",
+            post(routes::workshop::separation_callback),
+        );
 
     let pages = Router::new()
         .route("/", get(routes::pages::index))
         .route("/sing", get(routes::pages::sing_page))
-        .route("/song/edit/:song_id", get(routes::pages::song_edit_page));
+        .route("/song/edit/:song_id", get(routes::pages::song_edit_page))
+        .route("/workshop", get(routes::pages::workshop_page));
 
     let router = Router::new()
         .merge(pages)

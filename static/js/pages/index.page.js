@@ -6,16 +6,21 @@ function originLabel(v) {
 }
 
 function modeLabel(item) {
+    const preparing = item.prepare && (item.prepare.status === 'pending' || item.prepare.status === 'running');
+    if (preparing || (item.playback_mode === 'enhanced' && !item.can_queue)) {
+        return '准备中';
+    }
     if (item.playback_mode === 'enhanced') {
-        const src = item.playback_source || '';
-        if (src === 'embedded') return '增强(内嵌)';
         return '增强';
     }
-    return '仅播放';
+    return '普通';
 }
 
 function statusLabel(item) {
-    return item.can_queue ? '<span class="status-ok">可点歌</span>' : '<span class="status-bad">不可用</span>';
+    if (item.can_queue) return '<span class="status-ok">可点歌</span>';
+    const preparing = item.prepare && (item.prepare.status === 'pending' || item.prepare.status === 'running');
+    if (preparing) return '<span class="status-ok">准备中</span>';
+    return '<span class="status-bad">不可用</span>';
 }
 
 function toastMsg(msg, fallback) {
@@ -54,7 +59,11 @@ document.getElementById("file-upload").addEventListener('click', () => {
                             success_num += 1;
                         } else {
                             failure_num += 1;
-                            failure_file.push(res['data'] || files[i].name);
+                            const d = res['data'];
+                            const label = (typeof d === 'string' && d) ? d
+                                : (d && d.display_name) ? d.display_name
+                                : files[i].name;
+                            failure_file.push((res['msg'] ? (label + '：' + res['msg']) : label));
                         }
                     } else {
                         failure_num += 1;
