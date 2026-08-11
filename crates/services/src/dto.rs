@@ -13,6 +13,8 @@ pub struct ApiResult {
     pub page: i64,
     #[serde(rename = "totalPage")]
     pub total_page: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preparing_count: Option<i64>,
 }
 
 impl Default for ApiResult {
@@ -24,6 +26,7 @@ impl Default for ApiResult {
             total: 0,
             page: 0,
             total_page: 0,
+            preparing_count: None,
         }
     }
 }
@@ -84,6 +87,13 @@ impl ApiResult {
         } else {
             0
         };
+        self
+    }
+
+    pub fn with_preparing_count(mut self, count: usize) -> Self {
+        if count > 0 {
+            self.preparing_count = Some(count as i64);
+        }
         self
     }
 }

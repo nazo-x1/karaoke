@@ -13,10 +13,10 @@ pub mod queue_policy;
 pub use audio_layout::{
     get_track_index, match_role, AudioLayout, AudioTrack, LayoutType, TrackRole,
 };
-pub use media::{can_play_directly, file_ext, is_valid_browser_mp4, MediaInfo, StreamInfo};
+pub use media::{audio_can_copy, file_ext, is_valid_browser_mp4, MediaInfo, StreamInfo};
 pub use playback::{
-    resolve, EmbeddedAvailability, EmbeddedTriplet, OverrideStatus, OverrideTriplet, PlaybackInput,
-    PlaybackMode, PlaybackProfile, PlaybackSource,
+    resolve, EmbeddedAvailability, EmbeddedTriplet, PlaybackInput, PlaybackMode, PlaybackProfile,
+    PlaybackSource,
 };
 pub use prepare_policy::needs_prepare;
 pub use queue_policy::{queue_state_label, sort_pending, QueueSortItem, QueueState};

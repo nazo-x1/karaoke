@@ -1,7 +1,7 @@
 //! 播放路径解析。对应 Python `karaoke/domain/playback.py`。
 //!
 //! 与 Python 版本的关键差异：所有需要 `stat`/`isfile`/文件哈希 才能得到的事实
-//! （覆盖三件套是否存在、内嵌缓存是否有效等）均由调用方预先算好，通过
+//! （内嵌缓存是否有效等）均由调用方预先算好，通过
 //! [`PlaybackInput`] 传入；本模块只做纯决策，因此可以直接用固定数据做单元测试。
 
 use crate::audio_layout::{has_dual_roles, AudioLayout};
@@ -28,7 +28,6 @@ impl PlaybackMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PlaybackSource {
-    Override,
     Embedded,
     Plain,
 }
@@ -36,7 +35,6 @@ pub enum PlaybackSource {
 impl PlaybackSource {
     pub fn as_str(&self) -> &'static str {
         match self {
-            PlaybackSource::Override => "override",
             PlaybackSource::Embedded => "embedded",
             PlaybackSource::Plain => "plain",
         }
@@ -44,38 +42,7 @@ impl PlaybackSource {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct OverrideTriplet {
-    pub video: String,
-    pub vocals: String,
-    pub accompaniment: String,
-}
-
-/// 覆盖三件套的路径命名规则（纯字符串拼接，无 IO）。
-pub fn override_triplet_paths(override_dir: &str, display_name: &str) -> OverrideTriplet {
-    let base = format!("{}/{}", override_dir.trim_end_matches('/'), display_name);
-    OverrideTriplet {
-        video: format!("{base}.mp4"),
-        vocals: format!("{base}_vocals.mp3"),
-        accompaniment: format!("{base}_accompaniment.mp3"),
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct OverrideStatus {
-    pub video: bool,
-    pub vocals: bool,
-    pub accompaniment: bool,
-}
-
-impl OverrideStatus {
-    pub fn complete(&self) -> bool {
-        self.video && self.vocals && self.accompaniment
-    }
-}
-
-#[derive(Debug, Clone, Default)]
 pub struct EmbeddedTriplet {
-    pub video: String,
     pub vocals: String,
     pub accompaniment: String,
 }
@@ -86,15 +53,13 @@ pub struct EmbeddedAvailability {
     pub ready: bool,
 }
 
-/// 直接可播放判定所需事实（source 是否为浏览器原生可播编码，由 infra 通过 ffprobe 算好）。
+/// 直接可播放判定所需事实（由 infra 通过文件系统/缓存探测算好）。
 #[derive(Debug, Clone, Default)]
 pub struct PlaybackInput {
     pub source_path: String,
     pub source_ext: String,
     pub has_source_file: bool,
     pub is_playable: bool,
-    pub override_status: OverrideStatus,
-    pub override_paths: OverrideTriplet,
     pub audio_layout: Option<AudioLayout>,
     pub embedded: Option<EmbeddedAvailability>,
 }
@@ -130,22 +95,8 @@ pub fn video_mime_for_ext(ext: &str) -> Option<String> {
     Some(mime.to_string())
 }
 
-/// 解析播放路径（对应 Python `resolve()`）。
+/// 解析播放路径：有双轨 → Embedded，否则可播 → Plain，否则 NotReady。
 pub fn resolve(input: &PlaybackInput) -> PlaybackProfile {
-    if input.override_status.complete() {
-        return PlaybackProfile {
-            mode: PlaybackMode::Enhanced,
-            playback_source: PlaybackSource::Override,
-            can_queue: true,
-            video_path: Some(input.override_paths.video.clone()),
-            vocals_path: Some(input.override_paths.vocals.clone()),
-            accompaniment_path: Some(input.override_paths.accompaniment.clone()),
-            video_mime: Some("video/mp4".to_string()),
-            video_ext: Some("mp4".to_string()),
-            embedded_cache_ready: false,
-        };
-    }
-
     if input.has_source_file && has_dual_roles(input.audio_layout.as_ref()) {
         let (paths, ready) = match &input.embedded {
             Some(avail) => (avail.paths.clone(), avail.ready),
@@ -155,11 +106,12 @@ pub fn resolve(input: &PlaybackInput) -> PlaybackProfile {
             mode: PlaybackMode::Enhanced,
             playback_source: PlaybackSource::Embedded,
             can_queue: true,
-            video_path: Some(paths.video),
+            // 视频默认直发源文件；有兜底缓存时由 stream 层切换。
+            video_path: Some(input.source_path.clone()),
             vocals_path: Some(paths.vocals),
             accompaniment_path: Some(paths.accompaniment),
-            video_mime: Some("video/mp4".to_string()),
-            video_ext: Some("mp4".to_string()),
+            video_mime: video_mime_for_ext(&input.source_ext),
+            video_ext: Some(input.source_ext.clone()),
             embedded_cache_ready: ready,
         };
     }
@@ -208,12 +160,8 @@ pub fn list_meta_from_song(meta: &SongMeta) -> (String, String, bool) {
         .clone()
         .unwrap_or_else(|| "plain".to_string());
     let source = meta.playback_source.clone().unwrap_or_else(|| {
-        if mode == "enhanced" {
-            if has_dual_roles(meta.audio_layout.as_ref()) {
-                "embedded".to_string()
-            } else {
-                "override".to_string()
-            }
+        if mode == "enhanced" && has_dual_roles(meta.audio_layout.as_ref()) {
+            "embedded".to_string()
         } else {
             "plain".to_string()
         }
@@ -262,33 +210,14 @@ mod tests {
     }
 
     #[test]
-    fn override_complete_wins_over_everything() {
-        let input = PlaybackInput {
-            has_source_file: true,
-            is_playable: true,
-            override_status: OverrideStatus {
-                video: true,
-                vocals: true,
-                accompaniment: true,
-            },
-            override_paths: override_triplet_paths("/KTV/__override__", "song"),
-            ..Default::default()
-        };
-        let profile = resolve(&input);
-        assert_eq!(profile.mode, PlaybackMode::Enhanced);
-        assert_eq!(profile.playback_source, PlaybackSource::Override);
-        assert!(profile.can_queue);
-        assert_eq!(profile.video_path.unwrap(), "/KTV/__override__/song.mp4");
-    }
-
-    #[test]
     fn dual_layout_without_ready_cache_still_can_queue_but_not_ready() {
         let input = PlaybackInput {
+            source_path: "/KTV/song.mkv".into(),
+            source_ext: "mkv".into(),
             has_source_file: true,
             audio_layout: Some(dual_layout()),
             embedded: Some(EmbeddedAvailability {
                 paths: EmbeddedTriplet {
-                    video: "/cache/video.mp4".into(),
                     vocals: "/cache/vocals.m4a".into(),
                     accompaniment: "/cache/accompaniment.m4a".into(),
                 },
@@ -300,6 +229,7 @@ mod tests {
         assert_eq!(profile.playback_source, PlaybackSource::Embedded);
         assert!(profile.can_queue);
         assert!(!profile.embedded_cache_ready);
+        assert_eq!(profile.video_path.as_deref(), Some("/KTV/song.mkv"));
     }
 
     #[test]

@@ -8,7 +8,6 @@ function originLabel(v) {
 function modeLabel(item) {
     if (item.playback_mode === 'enhanced') {
         const src = item.playback_source || '';
-        if (src === 'override') return '增强(覆写)';
         if (src === 'embedded') return '增强(内嵌)';
         return '增强';
     }
@@ -124,6 +123,28 @@ function runScanPreview() {
     });
 }
 
+function pollScanValidateStatus() {
+    const preview = document.getElementById("scan-preview");
+    const tick = function () {
+        KTV.library.scanStatus().then(function (res) {
+            const s = res.data || {};
+            if (s.running) {
+                preview.innerText =
+                    `后台校验中：${s.done}/${s.total}，无效 ${s.invalid}`;
+                setTimeout(tick, 800);
+            } else {
+                preview.innerText =
+                    `校验完成：共 ${s.total}，无效 ${s.invalid}`;
+                $.Toast(`校验完成：无效 ${s.invalid}`, "success");
+                get_song_list();
+            }
+        }).catch(function () {
+            setTimeout(tick, 1500);
+        });
+    };
+    tick();
+}
+
 function runScanExecute() {
     const root = document.getElementById("scan-root").value.trim();
     const policy = document.getElementById("scan-policy").value;
@@ -136,8 +157,22 @@ function runScanExecute() {
     KTV.library.scan({ root, duplicate_policy: policy, validate }).then(function (data) {
         close_modal_cover();
         const d = data.data;
-        $.Toast(`扫描完成：新增 ${d.added}，跳过 ${d.skipped}，重命名 ${d.renamed}，无效 ${d.invalid}`, "success");
-        document.getElementById("scan-modal").classList.remove('open');
+        const pending = d.pending_validate || 0;
+        if (validate && pending > 0) {
+            $.Toast(
+                `落库完成：新增 ${d.added}，跳过 ${d.skipped}，重命名 ${d.renamed}；正在后台校验 ${pending} 个文件`,
+                "success"
+            );
+            document.getElementById("scan-preview").innerText =
+                `后台校验中：0/${pending}，无效 0`;
+            pollScanValidateStatus();
+        } else {
+            $.Toast(
+                `扫描完成：新增 ${d.added}，跳过 ${d.skipped}，重命名 ${d.renamed}`,
+                "success"
+            );
+            document.getElementById("scan-modal").classList.remove('open');
+        }
         get_song_list();
     }).catch(function (err) {
         close_modal_cover();
@@ -154,6 +189,12 @@ function get_song_list(page = 1) {
     let q = document.getElementById("file-search").value;
     KTV.library.list(page, q).then(function (data) {
         let s = '';
+        const prepHint = document.getElementById("prepare-hint");
+        if (prepHint) {
+            const n = data.preparing_count || 0;
+            prepHint.textContent = n > 0 ? `${n} 首正在后台准备` : '';
+            prepHint.style.display = n > 0 ? '' : 'none';
+        }
         if (data.total === 0) {
             $.Toast("没有歌曲", "error");
             document.getElementsByTagName("tbody")[0].innerHTML = '';

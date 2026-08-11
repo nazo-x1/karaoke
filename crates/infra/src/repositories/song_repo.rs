@@ -121,6 +121,23 @@ impl SongRepository {
         Ok(())
     }
 
+    pub async fn update_playable_flags(
+        &self,
+        id: i64,
+        is_playable: bool,
+        can_queue: bool,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE song SET is_playable = $1, can_queue = $2, update_time = now() WHERE id = $3",
+        )
+        .bind(is_playable)
+        .bind(can_queue)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn update_upload_fields(
         &self,
         id: i64,

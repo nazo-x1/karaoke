@@ -20,7 +20,7 @@ use tracing::{info, warn};
 pub type ProgressFn = Arc<dyn Fn(f64) + Send + Sync>;
 
 const CACHE_VERSION: &str = "v3";
-const EMBEDDED_CACHE_VERSION: &str = "v1";
+const EMBEDDED_CACHE_VERSION: &str = "v2";
 
 #[derive(Debug, Error)]
 pub enum MediaError {
@@ -129,11 +129,21 @@ pub async fn validate_browser_mp4(settings: &MediaSettings, path: &str) -> bool 
     }
 }
 
-pub async fn can_play_directly(settings: &MediaSettings, path: &str) -> bool {
-    match probe_media_info(settings, path).await {
-        Some(info) => karaoke_domain::can_play_directly(&info),
-        None => false,
+fn cache_fresher_than_source(source_path: &str, cached: &Path) -> bool {
+    match (std::fs::metadata(source_path), std::fs::metadata(cached)) {
+        (Ok(s), Ok(c)) => match (s.modified(), c.modified()) {
+            (Ok(sm), Ok(cm)) => cm >= sm,
+            _ => false,
+        },
+        _ => false,
     }
+}
+
+fn scale_filter_for_max_height(max_height: u32, video: &StreamInfo) -> Option<String> {
+    if max_height == 0 || video.height <= 0 || (video.height as u32) <= max_height {
+        return None;
+    }
+    Some(format!("scale=-2:{max_height}"))
 }
 
 async fn remux_to_mp4(
@@ -205,12 +215,15 @@ async fn transcode_to_mp4(
         source.to_string(),
     ];
     args.extend(ffmpeg_maps(video, audio));
+    if let Some(vf) = scale_filter_for_max_height(settings.transcode_max_height, video) {
+        args.extend(["-vf".to_string(), vf]);
+    }
     args.extend(
         [
             "-c:v",
             "libx264",
             "-preset",
-            "veryfast",
+            "ultrafast",
             "-crf",
             "23",
             "-pix_fmt",
@@ -340,8 +353,7 @@ pub fn browser_mp4_cache_path(
         .join(format!("{}.mp4", &digest[..20])))
 }
 
-/// 仅返回可直接播放或已有转码缓存的路径，不在读路径上触发 ffmpeg（对应
-/// Python `resolve_browser_video_path_readonly`）。
+/// 有兜底缓存且比源新则发缓存，否则直发源文件。纯文件系统检查，不跑 ffprobe。
 pub async fn resolve_browser_video_path_readonly(
     settings: &MediaSettings,
     source_path: &str,
@@ -349,27 +361,18 @@ pub async fn resolve_browser_video_path_readonly(
     if !Path::new(source_path).is_file() {
         return None;
     }
-    let ext = file_ext(source_path);
-    if can_play_directly(settings, source_path).await {
-        let mime = karaoke_domain::playback::video_mime_for_ext(&ext)
-            .unwrap_or_else(|| "application/octet-stream".to_string());
-        return Some((PathBuf::from(source_path), mime));
-    }
-
-    let cached = browser_mp4_cache_path(settings, source_path).ok()?;
-    if cached.is_file() {
-        let source_mtime = std::fs::metadata(source_path).ok()?.modified().ok()?;
-        let cache_mtime = std::fs::metadata(&cached).ok()?.modified().ok()?;
-        if cache_mtime >= source_mtime
-            && validate_browser_mp4(settings, &cached.to_string_lossy()).await
-        {
+    if let Ok(cached) = browser_mp4_cache_path(settings, source_path) {
+        if cached.is_file() && cache_fresher_than_source(source_path, &cached) {
             return Some((cached, "video/mp4".to_string()));
         }
     }
-    None
+    let ext = file_ext(source_path);
+    let mime = karaoke_domain::playback::video_mime_for_ext(&ext)
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+    Some((PathBuf::from(source_path), mime))
 }
 
-/// 后台任务：生成浏览器可播 mp4 缓存（对应 Python `ensure_browser_mp4_cache`）。
+/// 后台任务：生成浏览器可播 mp4 兜底缓存（由播放失败上报强制触发）。
 pub async fn ensure_browser_mp4_cache(
     settings: &MediaSettings,
     source_path: &str,
@@ -378,21 +381,11 @@ pub async fn ensure_browser_mp4_cache(
     if !Path::new(source_path).is_file() {
         return false;
     }
-    if can_play_directly(settings, source_path).await {
-        return true;
-    }
     let Ok(cached) = browser_mp4_cache_path(settings, source_path) else {
         return false;
     };
-    if cached.is_file() {
-        let ok = match (std::fs::metadata(source_path), std::fs::metadata(&cached)) {
-            (Ok(s), Ok(c)) => match (s.modified(), c.modified()) {
-                (Ok(sm), Ok(cm)) => cm >= sm,
-                _ => false,
-            },
-            _ => false,
-        };
-        if ok && validate_browser_mp4(settings, &cached.to_string_lossy()).await {
+    if cached.is_file() && cache_fresher_than_source(source_path, &cached) {
+        if validate_browser_mp4(settings, &cached.to_string_lossy()).await {
             return true;
         }
         remove_if_exists(&cached).await;
@@ -400,99 +393,7 @@ pub async fn ensure_browser_mp4_cache(
     prepare_browser_mp4(settings, source_path, &cached, on_progress).await
 }
 
-/// 生成无音轨浏览器可播 mp4（内嵌拆轨场景，对应 `prepare_video_only_mp4`）。
-pub async fn prepare_video_only_mp4(
-    settings: &MediaSettings,
-    source: &str,
-    dest: &Path,
-    on_progress: Option<ProgressFn>,
-) -> bool {
-    let Some(info) = probe_media_info(settings, source).await else {
-        return false;
-    };
-    let Some(video) = karaoke_domain::media::pick_main_video_stream(&info.streams).cloned() else {
-        return false;
-    };
-    if let Some(parent) = dest.parent() {
-        let _ = tokio::fs::create_dir_all(parent).await;
-    }
-    let duration = if info.duration > 0.0 {
-        Some(info.duration)
-    } else {
-        None
-    };
-
-    let args: Vec<String> = if karaoke_domain::media::stream_needs_transcode(&video) {
-        [
-            "-y",
-            "-nostdin",
-            "-i",
-            source,
-            "-map",
-            &format!("0:{}", video.index),
-            "-an",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "23",
-            "-pix_fmt",
-            "yuv420p",
-            "-profile:v",
-            "high",
-            "-level",
-            "4.1",
-            "-tag:v",
-            "avc1",
-            "-movflags",
-            "+faststart",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .chain(std::iter::once(dest.to_string_lossy().to_string()))
-        .collect()
-    } else {
-        [
-            "-y",
-            "-nostdin",
-            "-i",
-            source,
-            "-map",
-            &format!("0:{}", video.index),
-            "-an",
-            "-c:v",
-            "copy",
-            "-tag:v",
-            "avc1",
-            "-movflags",
-            "+faststart",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .chain(std::iter::once(dest.to_string_lossy().to_string()))
-        .collect()
-    };
-
-    let result = run_ffmpeg_with_progress(
-        settings,
-        args,
-        duration,
-        on_progress,
-        settings.transcode_timeout,
-    )
-    .await;
-    match result {
-        Ok(()) => validate_browser_mp4(settings, &dest.to_string_lossy()).await,
-        Err(e) => {
-            warn!("video-only extract failed {source}: {e}");
-            remove_if_exists(dest).await;
-            false
-        }
-    }
-}
-
-/// 提取单条音轨为 AAC（对应 `extract_audio_track`）。
+/// 提取单条音轨为 AAC；源轨已兼容时 `-c:a copy`。
 pub async fn extract_audio_track(
     settings: &MediaSettings,
     source: &str,
@@ -504,14 +405,23 @@ pub async fn extract_audio_track(
     if let Some(parent) = dest.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
-    let duration = if duration_sec.is_some() {
-        duration_sec
-    } else {
-        probe_media_info(settings, source)
-            .await
+    let info = probe_media_info(settings, source).await;
+    let duration = duration_sec.or_else(|| {
+        info.as_ref()
             .and_then(|i| (i.duration > 0.0).then_some(i.duration))
-    };
-    let args: Vec<String> = [
+    });
+    let codec = info
+        .as_ref()
+        .and_then(|i| {
+            i.streams
+                .iter()
+                .find(|s| s.index == track_index && s.codec_type == "audio")
+                .map(|s| s.codec_name.clone())
+        })
+        .unwrap_or_default();
+    let copy = karaoke_domain::audio_can_copy(&codec);
+
+    let mut args: Vec<String> = [
         "-y",
         "-nostdin",
         "-i",
@@ -519,17 +429,20 @@ pub async fn extract_audio_track(
         "-map",
         &format!("0:{track_index}"),
         "-vn",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-ac",
-        "2",
     ]
     .iter()
     .map(|s| s.to_string())
-    .chain(std::iter::once(dest.to_string_lossy().to_string()))
     .collect();
+    if copy {
+        args.extend(["-c:a".to_string(), "copy".to_string()]);
+    } else {
+        args.extend(
+            ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
+                .iter()
+                .map(|s| s.to_string()),
+        );
+    }
+    args.push(dest.to_string_lossy().to_string());
 
     let result = run_ffmpeg_with_progress(
         settings,

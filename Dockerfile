@@ -58,7 +58,7 @@ COPY config.toml ./config.toml
 COPY templates ./templates
 COPY static ./static
 
-RUN mkdir -p "${KTV_PATH}/__keep__" "${KTV_PATH}/__override__" "${KTV_PATH}/__play_cache__/embedded"
+RUN mkdir -p "${KTV_PATH}/__keep__" "${KTV_PATH}/__play_cache__/embedded"
 
 EXPOSE 15233
 

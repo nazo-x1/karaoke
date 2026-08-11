@@ -1,4 +1,4 @@
-//! MKV 双音轨内嵌缓存构建。对应 Python `karaoke/infra/embedded.py`。
+//! MKV 双音轨内嵌缓存构建。视频直发源文件；此处只抽取 vocals/accompaniment 音频。
 
 use crate::media::{MediaSettings, ProgressFn};
 use karaoke_domain::{get_track_index, AudioLayout, TrackRole};
@@ -8,7 +8,6 @@ use tracing::{info, warn};
 
 #[derive(Debug, Clone, Default)]
 pub struct EmbeddedPaths {
-    pub video: PathBuf,
     pub vocals: PathBuf,
     pub accompaniment: PathBuf,
     pub ready: bool,
@@ -24,11 +23,10 @@ struct Manifest {
     version: String,
 }
 
-const VERSION: &str = "v1";
+const VERSION: &str = "v2";
 
 fn expected_paths(cache_dir: PathBuf) -> EmbeddedPaths {
     EmbeddedPaths {
-        video: cache_dir.join("video.mp4"),
         vocals: cache_dir.join("vocals.m4a"),
         accompaniment: cache_dir.join("accompaniment.m4a"),
         ready: false,
@@ -63,7 +61,7 @@ fn write_manifest(
 }
 
 fn is_cache_valid(source_path: &str, layout: &AudioLayout, paths: &EmbeddedPaths) -> bool {
-    for p in [&paths.video, &paths.vocals, &paths.accompaniment] {
+    for p in [&paths.vocals, &paths.accompaniment] {
         match std::fs::metadata(p) {
             Ok(m) if m.len() > 0 => {}
             _ => return false,
@@ -79,10 +77,11 @@ fn is_cache_valid(source_path: &str, layout: &AudioLayout, paths: &EmbeddedPaths
     manifest.source_path == source_path
         && manifest.source_mtime_ns == meta.mtime_nsec()
         && manifest.source_size == meta.size()
+        && manifest.version == VERSION
         && serde_json::to_string(&manifest.layout).ok() == serde_json::to_string(layout).ok()
 }
 
-/// 计算/生成内嵌拆轨缓存。`prepare=false` 时只查询是否已存在有效缓存（不触发 ffmpeg）。
+/// 计算/生成内嵌音轨缓存。`prepare=false` 时只查询是否已存在有效缓存（不触发 ffmpeg）。
 pub async fn ensure_embedded_cache(
     settings: &MediaSettings,
     source_path: &str,
@@ -137,15 +136,6 @@ pub async fn ensure_embedded_cache(
     };
 
     report(0.0);
-    let ok_video = crate::media::transcode::prepare_video_only_mp4(
-        settings,
-        source_path,
-        &paths.video,
-        on_progress.clone(),
-    )
-    .await;
-
-    report(40.0);
     let ok_vocals = crate::media::transcode::extract_audio_track(
         settings,
         source_path,
@@ -156,7 +146,7 @@ pub async fn ensure_embedded_cache(
     )
     .await;
 
-    report(55.0);
+    report(50.0);
     let ok_accomp = crate::media::transcode::extract_audio_track(
         settings,
         source_path,
@@ -167,16 +157,16 @@ pub async fn ensure_embedded_cache(
     )
     .await;
 
-    if ok_video && ok_vocals && ok_accomp {
+    if ok_vocals && ok_accomp {
         report(100.0);
         if let Err(e) = write_manifest(&cache_dir, source_path, layout) {
             warn!("write manifest failed {}: {e}", cache_dir.display());
         }
         paths.ready = true;
-        info!("embedded cache ready: {}", cache_dir.display());
+        info!("embedded audio cache ready: {}", cache_dir.display());
     } else {
         paths.ready = false;
-        warn!("embedded cache incomplete: {source_path}");
+        warn!("embedded audio cache incomplete: {source_path}");
     }
 
     paths

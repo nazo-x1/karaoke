@@ -4,9 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const NATIVE_VIDEO_EXTS: &[&str] = &["mp4", "m4v", "webm", "mov"];
 pub const BROWSER_MP4_VIDEO_CODECS: &[&str] = &["h264", "avc1", "avc"];
-pub const BROWSER_AUDIO_CODECS: &[&str] = &["aac", "mp3", "mp4a", "opus", "vorbis", "flac"];
 pub const TRANSCODE_VIDEO_CODECS: &[&str] = &[
     "hevc",
     "h265",
@@ -101,36 +99,14 @@ fn needs_transcode(video: &StreamInfo) -> bool {
     true
 }
 
-fn codec_supported(codec: Option<&str>, allowed: &[&str]) -> bool {
-    match codec {
-        None => true,
-        Some(c) => allowed.contains(&codec_base(c).as_str()),
-    }
-}
-
 /// 是否需要转码为浏览器可播 H.264（与 Python `_needs_transcode` 等价）。
 pub fn stream_needs_transcode(video: &StreamInfo) -> bool {
     needs_transcode(video)
 }
 
-/// 源文件是否可被浏览器直接播放，无需转码（对应 Python `can_play_directly`）。
-pub fn can_play_directly(info: &MediaInfo) -> bool {
-    if !info.has_video {
-        return false;
-    }
-    if !NATIVE_VIDEO_EXTS.contains(&info.ext.as_str()) {
-        return false;
-    }
-    let Some(video) = pick_main_video_stream(&info.streams) else {
-        return false;
-    };
-    if needs_transcode(video) {
-        return false;
-    }
-    if info.has_audio && !codec_supported(info.audio_codec.as_deref(), BROWSER_AUDIO_CODECS) {
-        return false;
-    }
-    true
+/// 音轨是否可直接 copy 进 m4a（AAC）。
+pub fn audio_can_copy(codec: &str) -> bool {
+    matches!(codec_base(codec).as_str(), "aac" | "mp4a")
 }
 
 /// 转码产物校验：是否是浏览器可播的 H.264 mp4（对应 Python `_validate_browser_mp4`）。
@@ -176,62 +152,22 @@ mod tests {
     }
 
     #[test]
-    fn h264_native_mp4_plays_directly() {
-        let info = MediaInfo {
-            ext: "mp4".into(),
-            has_video: true,
-            has_audio: true,
-            audio_codec: Some("aac".into()),
-            streams: vec![video_stream("h264", 1920, 1080, "yuv420p")],
-            ..Default::default()
-        };
-        assert!(can_play_directly(&info));
-    }
-
-    #[test]
     fn hevc_requires_transcode() {
-        let info = MediaInfo {
-            ext: "mp4".into(),
-            has_video: true,
-            streams: vec![video_stream("hevc", 1920, 1080, "yuv420p")],
-            ..Default::default()
-        };
-        assert!(!can_play_directly(&info));
+        let video = video_stream("hevc", 1920, 1080, "yuv420p");
+        assert!(stream_needs_transcode(&video));
     }
 
     #[test]
     fn ten_bit_h264_requires_transcode() {
-        let info = MediaInfo {
-            ext: "mp4".into(),
-            has_video: true,
-            streams: vec![video_stream("h264", 1920, 1080, "yuv420p10le")],
-            ..Default::default()
-        };
-        assert!(!can_play_directly(&info));
+        let video = video_stream("h264", 1920, 1080, "yuv420p10le");
+        assert!(stream_needs_transcode(&video));
     }
 
     #[test]
-    fn mkv_container_always_needs_remux() {
-        let info = MediaInfo {
-            ext: "mkv".into(),
-            has_video: true,
-            streams: vec![video_stream("h264", 1920, 1080, "yuv420p")],
-            ..Default::default()
-        };
-        assert!(!can_play_directly(&info));
-    }
-
-    #[test]
-    fn unsupported_audio_codec_blocks_direct_play() {
-        let info = MediaInfo {
-            ext: "mp4".into(),
-            has_video: true,
-            has_audio: true,
-            audio_codec: Some("dts".into()),
-            streams: vec![video_stream("h264", 1920, 1080, "yuv420p")],
-            ..Default::default()
-        };
-        assert!(!can_play_directly(&info));
+    fn aac_audio_can_copy() {
+        assert!(audio_can_copy("aac"));
+        assert!(audio_can_copy("mp4a.40.2"));
+        assert!(!audio_can_copy("dts"));
     }
 
     #[test]

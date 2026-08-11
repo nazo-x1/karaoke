@@ -1,29 +1,15 @@
 //! 播放资源准备判定。对应 Python `karaoke/domain/prepare_policy.py`。
 
-use crate::playback::{PlaybackMode, PlaybackProfile, PlaybackSource};
+use crate::playback::{PlaybackProfile, PlaybackSource};
 
-/// 判断是否需要后台 prepare（内嵌拆轨或 plain 浏览器转码）。
+/// 判断是否需要后台 prepare。
 ///
-/// - `override_complete`：`__override__` 三件套是否齐全（齐全则永不需要 prepare）。
-/// - `layout_has_dual_roles`：当前音轨布局是否为双轨（由 infra 解析 `audio_layout` 得出）。
-/// - `can_play_directly`：源文件是否可被浏览器直接播放（由 infra 调 ffprobe 得出）。
-pub fn needs_prepare(
-    profile: &PlaybackProfile,
-    override_complete: bool,
-    layout_has_dual_roles: bool,
-    can_play_directly: bool,
-) -> bool {
-    if override_complete {
-        return false;
-    }
-    match profile.playback_source {
-        PlaybackSource::Embedded => layout_has_dual_roles && !profile.embedded_cache_ready,
-        _ => {
-            profile.mode == PlaybackMode::Plain
-                && profile.video_path.is_some()
-                && !can_play_directly
-        }
-    }
+/// 仅 embedded（双轨）且音频缓存未就绪时需要；plain 默认直发源文件，永不主动 prepare
+/// （兜底转码仅由播放失败上报被动触发）。
+pub fn needs_prepare(profile: &PlaybackProfile, layout_has_dual_roles: bool) -> bool {
+    matches!(profile.playback_source, PlaybackSource::Embedded)
+        && layout_has_dual_roles
+        && !profile.embedded_cache_ready
 }
 
 #[cfg(test)]
@@ -32,13 +18,7 @@ mod tests {
     use crate::playback::{resolve, PlaybackInput};
 
     #[test]
-    fn override_complete_never_needs_prepare() {
-        let profile = resolve(&PlaybackInput::default());
-        assert!(!needs_prepare(&profile, true, false, false));
-    }
-
-    #[test]
-    fn plain_mode_needs_prepare_when_not_directly_playable() {
+    fn plain_mode_never_needs_prepare() {
         let input = PlaybackInput {
             source_path: "/KTV/a.mkv".into(),
             source_ext: "mkv".into(),
@@ -47,8 +27,7 @@ mod tests {
             ..Default::default()
         };
         let profile = resolve(&input);
-        assert!(needs_prepare(&profile, false, false, false));
-        assert!(!needs_prepare(&profile, false, false, true));
+        assert!(!needs_prepare(&profile, false));
     }
 
     #[test]
@@ -79,6 +58,8 @@ mod tests {
             "auto",
         );
         let input = PlaybackInput {
+            source_path: "/KTV/a.mkv".into(),
+            source_ext: "mkv".into(),
             has_source_file: true,
             audio_layout: Some(layout),
             embedded: Some(EmbeddedAvailability {
@@ -88,6 +69,6 @@ mod tests {
             ..Default::default()
         };
         let profile = resolve(&input);
-        assert!(needs_prepare(&profile, false, true, false));
+        assert!(needs_prepare(&profile, true));
     }
 }

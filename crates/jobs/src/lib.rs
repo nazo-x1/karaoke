@@ -68,20 +68,27 @@ struct PrepareTask {
     prepare_kind: String,
     error: Option<String>,
     started: bool,
+    /// 强制兜底转码（播放失败上报），绕过 needs_prepare / is_stream_ready。
+    force_fallback: bool,
     finished_at: Option<Instant>,
 }
 
 impl PrepareTask {
-    fn new(song_id: i64) -> Self {
+    fn new(song_id: i64, force_fallback: bool) -> Self {
         Self {
             song_id,
             state: PrepareState::Pending,
             phase: "pending".to_string(),
             progress: 0.0,
             message: "排队等待中".to_string(),
-            prepare_kind: "unknown".to_string(),
+            prepare_kind: if force_fallback {
+                "fallback".to_string()
+            } else {
+                "unknown".to_string()
+            },
             error: None,
             started: false,
+            force_fallback,
             finished_at: None,
         }
     }
@@ -130,12 +137,31 @@ impl PrepareTaskManager {
     }
 
     pub async fn schedule(self: &Arc<Self>, song_id: i64) -> PrepareStatus {
+        self.schedule_inner(song_id, false).await
+    }
+
+    /// 强制排队生成浏览器兜底 mp4 缓存（播放失败上报）。
+    pub async fn schedule_force_fallback(self: &Arc<Self>, song_id: i64) -> PrepareStatus {
+        self.schedule_inner(song_id, true).await
+    }
+
+    async fn schedule_inner(self: &Arc<Self>, song_id: i64, force_fallback: bool) -> PrepareStatus {
         {
-            let inner = self.inner.lock().unwrap();
-            if let Some(task) = inner.tasks.get(&song_id) {
-                if matches!(task.state, PrepareState::Pending | PrepareState::Running) {
-                    return to_status(task, &inner.wait_queue, inner.running);
+            let mut inner = self.inner.lock().unwrap();
+            let active = inner
+                .tasks
+                .get(&song_id)
+                .map(|t| matches!(t.state, PrepareState::Pending | PrepareState::Running))
+                .unwrap_or(false);
+            if active {
+                if force_fallback {
+                    if let Some(task) = inner.tasks.get_mut(&song_id) {
+                        task.force_fallback = true;
+                        task.prepare_kind = "fallback".to_string();
+                    }
                 }
+                let task = inner.tasks.get(&song_id).expect("active task");
+                return to_status(task, &inner.wait_queue, inner.running);
             }
         }
 
@@ -143,10 +169,7 @@ impl PrepareTaskManager {
             return not_found_status(song_id);
         };
 
-        if self.resolver.override_complete(&song.display_name).await {
-            return not_needed_status(song_id, "无需准备（已有 override 三件套）");
-        }
-        if self.resolver.is_stream_ready(&song).await {
+        if !force_fallback && self.resolver.is_stream_ready(&song).await {
             return ready_status(song_id);
         }
 
@@ -160,7 +183,13 @@ impl PrepareTaskManager {
             inner
                 .tasks
                 .entry(song_id)
-                .or_insert_with(|| PrepareTask::new(song_id));
+                .or_insert_with(|| PrepareTask::new(song_id, force_fallback));
+            if let Some(task) = inner.tasks.get_mut(&song_id) {
+                task.force_fallback = force_fallback || task.force_fallback;
+                if task.force_fallback {
+                    task.prepare_kind = "fallback".to_string();
+                }
+            }
             inner.wait_queue.retain(|id| *id != song_id);
             inner.wait_queue.push_back(song_id);
         }
@@ -315,6 +344,15 @@ impl PrepareTaskManager {
         }
     }
 
+    fn take_force_fallback(&self, song_id: i64) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .tasks
+            .get(&song_id)
+            .map(|t| t.force_fallback)
+            .unwrap_or(false)
+    }
+
     async fn run(self: &Arc<Self>, song_id: i64) {
         self.set_state(song_id, PrepareState::Running);
         self.set_progress(song_id, 0.0, "running", "准备中");
@@ -328,9 +366,31 @@ impl PrepareTaskManager {
             }
         };
 
-        if self.resolver.override_complete(&song.display_name).await {
-            self.set_state(song_id, PrepareState::NotNeeded);
-            self.set_progress(song_id, 100.0, "done", "无需准备");
+        let force_fallback = self.take_force_fallback(song_id);
+
+        if force_fallback {
+            self.set_kind(song_id, "fallback");
+            self.set_progress(song_id, 0.0, "transcode", "播放失败兜底转码中");
+            let manager = Arc::clone(self);
+            let sid = song_id;
+            let progress_cb: karaoke_infra::media::ProgressFn = Arc::new(move |pct: f64| {
+                manager.set_progress(sid, pct, "transcode", "播放失败兜底转码中");
+            });
+            let ok = ensure_browser_mp4_cache(
+                &self.resolver.media,
+                &song.source_path,
+                Some(progress_cb),
+            )
+            .await;
+            if ok {
+                self.set_state(song_id, PrepareState::Ready);
+                self.set_progress(song_id, 100.0, "done", "兜底缓存就绪");
+                self.events.publish_prepare_ready(song_id);
+            } else {
+                self.set_state(song_id, PrepareState::Failed);
+                self.set_error(song_id, "兜底转码缓存生成失败");
+                self.set_progress(song_id, 0.0, "failed", "转码失败");
+            }
             return;
         }
 
@@ -339,7 +399,7 @@ impl PrepareTaskManager {
         match profile.playback_source {
             PlaybackSource::Embedded => {
                 self.set_kind(song_id, "embedded");
-                self.set_progress(song_id, 0.0, "embedded_video", "MKV 双音轨拆轨中");
+                self.set_progress(song_id, 0.0, "embedded_audio", "双音轨音频抽取中");
 
                 let mut layout = song.layout().cloned();
                 if layout.is_none() {
@@ -363,7 +423,7 @@ impl PrepareTaskManager {
                 let manager = Arc::clone(self);
                 let sid = song_id;
                 let progress_cb: karaoke_infra::media::ProgressFn = Arc::new(move |pct: f64| {
-                    manager.set_progress(sid, pct, "embedded", "MKV 双音轨拆轨中");
+                    manager.set_progress(sid, pct, "embedded", "双音轨音频抽取中");
                 });
 
                 let paths = ensure_embedded_cache(
@@ -391,42 +451,71 @@ impl PrepareTaskManager {
                 }
 
                 if paths.ready {
-                    self.set_state(song_id, PrepareState::Ready);
-                    self.set_progress(song_id, 100.0, "done", "缓存就绪");
-                    self.events.publish_prepare_ready(song_id);
+                    // 运行中被升级为 force_fallback 时，继续生成视频兜底缓存。
+                    if self.take_force_fallback(song_id) {
+                        self.set_kind(song_id, "fallback");
+                        self.set_progress(song_id, 0.0, "transcode", "播放失败兜底转码中");
+                        let manager = Arc::clone(self);
+                        let sid = song_id;
+                        let progress_cb: karaoke_infra::media::ProgressFn =
+                            Arc::new(move |pct: f64| {
+                                manager.set_progress(sid, pct, "transcode", "播放失败兜底转码中");
+                            });
+                        let ok = ensure_browser_mp4_cache(
+                            &self.resolver.media,
+                            &song.source_path,
+                            Some(progress_cb),
+                        )
+                        .await;
+                        if ok {
+                            self.set_state(song_id, PrepareState::Ready);
+                            self.set_progress(song_id, 100.0, "done", "兜底缓存就绪");
+                            self.events.publish_prepare_ready(song_id);
+                        } else {
+                            self.set_state(song_id, PrepareState::Failed);
+                            self.set_error(song_id, "兜底转码缓存生成失败");
+                            self.set_progress(song_id, 0.0, "failed", "转码失败");
+                        }
+                    } else {
+                        self.set_state(song_id, PrepareState::Ready);
+                        self.set_progress(song_id, 100.0, "done", "缓存就绪");
+                        self.events.publish_prepare_ready(song_id);
+                    }
                 } else {
                     self.set_state(song_id, PrepareState::Failed);
-                    self.set_error(song_id, "内嵌缓存生成失败");
+                    self.set_error(song_id, "内嵌音频缓存生成失败");
                     self.set_progress(song_id, 0.0, "failed", "内嵌缓存生成失败");
                 }
             }
-            PlaybackSource::Plain if profile.video_path.is_some() => {
-                self.set_kind(song_id, "plain");
-                self.set_progress(song_id, 0.0, "transcode", "浏览器转码中");
-                let video_path = profile.video_path.clone().unwrap();
-
-                let manager = Arc::clone(self);
-                let sid = song_id;
-                let progress_cb: karaoke_infra::media::ProgressFn = Arc::new(move |pct: f64| {
-                    manager.set_progress(sid, pct, "transcode", "浏览器转码中");
-                });
-
-                let ok =
-                    ensure_browser_mp4_cache(&self.resolver.media, &video_path, Some(progress_cb))
-                        .await;
-                if ok {
-                    self.set_state(song_id, PrepareState::Ready);
-                    self.set_progress(song_id, 100.0, "done", "转码完成");
-                    self.events.publish_prepare_ready(song_id);
-                } else {
-                    self.set_state(song_id, PrepareState::Failed);
-                    self.set_error(song_id, "浏览器转码缓存生成失败");
-                    self.set_progress(song_id, 0.0, "failed", "转码失败");
-                }
-            }
             _ => {
-                self.set_state(song_id, PrepareState::NotNeeded);
-                self.set_progress(song_id, 100.0, "done", "无需准备");
+                if self.take_force_fallback(song_id) {
+                    self.set_kind(song_id, "fallback");
+                    self.set_progress(song_id, 0.0, "transcode", "播放失败兜底转码中");
+                    let manager = Arc::clone(self);
+                    let sid = song_id;
+                    let progress_cb: karaoke_infra::media::ProgressFn =
+                        Arc::new(move |pct: f64| {
+                            manager.set_progress(sid, pct, "transcode", "播放失败兜底转码中");
+                        });
+                    let ok = ensure_browser_mp4_cache(
+                        &self.resolver.media,
+                        &song.source_path,
+                        Some(progress_cb),
+                    )
+                    .await;
+                    if ok {
+                        self.set_state(song_id, PrepareState::Ready);
+                        self.set_progress(song_id, 100.0, "done", "兜底缓存就绪");
+                        self.events.publish_prepare_ready(song_id);
+                    } else {
+                        self.set_state(song_id, PrepareState::Failed);
+                        self.set_error(song_id, "兜底转码缓存生成失败");
+                        self.set_progress(song_id, 0.0, "failed", "转码失败");
+                    }
+                } else {
+                    self.set_state(song_id, PrepareState::NotNeeded);
+                    self.set_progress(song_id, 100.0, "done", "无需准备");
+                }
             }
         }
     }

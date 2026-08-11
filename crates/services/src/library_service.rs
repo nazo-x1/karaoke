@@ -5,7 +5,7 @@ use crate::mappers::song_item;
 use karaoke_infra::media::MediaSettings;
 use karaoke_infra::repositories::song_repo::PAGE_SIZE;
 use karaoke_infra::repositories::SongRepository;
-use karaoke_infra::scanner::{scan_root, ScanOptions};
+use karaoke_infra::scanner::{run_validate_paths, scan_root, ScanOptions, ScanTaskManager};
 use karaoke_infra::PlaybackResolver;
 use karaoke_jobs::PrepareTaskManager;
 use std::collections::HashSet;
@@ -18,6 +18,7 @@ pub struct LibraryService {
     pub resolver: PlaybackResolver,
     pub prepare: Arc<PrepareTaskManager>,
     pub media: MediaSettings,
+    pub scan_tasks: ScanTaskManager,
     pub keep_path: PathBuf,
     pub scan_video_exts: HashSet<String>,
     pub skip_dir_names: HashSet<String>,
@@ -190,6 +191,11 @@ impl LibraryService {
             )
             .await?;
 
+        // 上传后自动预热双轨音频抽取（plain 无需 prepare）。
+        if self.resolver.needs_prepare(&song, &profile).await {
+            let _ = self.prepare.schedule(song.id).await;
+        }
+
         tracing::info!("{filename} 上传成功");
         Ok(ApiResult::ok_msg_data(
             format!("{filename} 上传成功"),
@@ -204,11 +210,14 @@ impl LibraryService {
             Err(e) => return ApiResult::fail(db_error_message(&e, "获取曲库列表失败")),
         };
         let active = self.prepare.active_tasks();
+        let preparing = active.len();
         let items: Vec<_> = songs
             .iter()
             .map(|s| song_item(s, None, active.get(&s.id).cloned()))
             .collect();
-        ApiResult::ok_with_data(items).with_pagination(total, page.max(1), size)
+        ApiResult::ok_with_data(items)
+            .with_pagination(total, page.max(1), size)
+            .with_preparing_count(preparing)
     }
 
     pub async fn delete_song(&self, song_id: i64, delete_disk: bool) -> ApiResult {
@@ -237,11 +246,13 @@ impl LibraryService {
         if root.trim().is_empty() {
             return ApiResult::fail("请指定扫描根路径");
         }
+        let want_validate = validate.unwrap_or(self.ffprobe_on_import);
         let options = ScanOptions {
             duplicate_policy: duplicate_policy
                 .unwrap_or(&self.default_duplicate_policy)
                 .to_string(),
-            validate: validate.unwrap_or(self.ffprobe_on_import),
+            // 正式扫描：落库先行，校验后台跑。
+            validate: want_validate,
             dry_run: false,
         };
         match scan_root(
@@ -254,14 +265,39 @@ impl LibraryService {
         )
         .await
         {
-            Ok(stats) => ApiResult::ok_msg_data("扫描完成", stats),
+            Ok(result) => {
+                if want_validate && !result.paths_to_validate.is_empty() {
+                    let media = self.media.clone();
+                    let songs = self.songs.clone();
+                    let tasks = self.scan_tasks.clone();
+                    let paths = result.paths_to_validate;
+                    tokio::spawn(async move {
+                        run_validate_paths(&media, &songs, &tasks, paths).await;
+                    });
+                }
+                // 扫描后预热双轨歌曲。
+                self.warmup_needing_prepare().await;
+                let msg = if want_validate {
+                    "扫描落库完成，校验在后台进行"
+                } else {
+                    "扫描完成"
+                };
+                ApiResult::ok_msg_data(msg, result.stats)
+            }
             Err(karaoke_infra::scanner::ScanError::RootNotFound(_)) => {
                 ApiResult::fail("扫描路径不存在或不可读")
+            }
+            Err(karaoke_infra::scanner::ScanError::Busy) => {
+                ApiResult::fail("已有扫描校验任务正在运行")
             }
             Err(karaoke_infra::scanner::ScanError::Db(e)) => {
                 ApiResult::fail(db_error_message(&e, "扫描导入失败"))
             }
         }
+    }
+
+    pub fn scan_status(&self) -> karaoke_infra::scanner::ScanValidateStatus {
+        self.scan_tasks.status()
     }
 
     pub async fn preview_scan(
@@ -290,12 +326,28 @@ impl LibraryService {
         )
         .await
         {
-            Ok(stats) => ApiResult::ok_msg_data("预览完成", stats),
+            Ok(result) => ApiResult::ok_msg_data("预览完成", result.stats),
             Err(karaoke_infra::scanner::ScanError::RootNotFound(_)) => {
                 ApiResult::fail("扫描路径不存在或不可读")
             }
+            Err(karaoke_infra::scanner::ScanError::Busy) => {
+                ApiResult::fail("已有扫描校验任务正在运行")
+            }
             Err(karaoke_infra::scanner::ScanError::Db(e)) => {
                 ApiResult::fail(db_error_message(&e, "扫描预览失败"))
+            }
+        }
+    }
+
+    /// 为需要双轨音频抽取的歌曲调度 prepare。
+    pub async fn warmup_needing_prepare(&self) {
+        let Ok(songs) = self.songs.all_for_scan().await else {
+            return;
+        };
+        for song in songs {
+            let profile = self.resolver.resolve(&song).await;
+            if self.resolver.needs_prepare(&song, &profile).await {
+                let _ = self.prepare.schedule(song.id).await;
             }
         }
     }

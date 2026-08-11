@@ -63,15 +63,26 @@ function bindVideoReady(flag, onReady) {
         if (onReady) onReady();
     };
     video.addEventListener('canplaythrough', onCanPlay, { once: true });
-    video.addEventListener('error', () => {
+    video.addEventListener('error', async () => {
         const code = video.error ? video.error.code : 0;
         const hints = {
             4: '视频格式或编码不受浏览器支持',
             2: '网络错误，无法加载视频',
             3: '视频解码失败',
         };
-        $.Toast(hints[code] || '视频加载失败，请检查文件格式', 'error');
+        $.Toast(hints[code] || '视频加载失败，已跳过并后台转码', 'error');
         console.error('video error', video.error);
+        if (currentSongId) {
+            try {
+                await KTV.playback.reportUnplayable(currentSongId);
+            } catch (err) {
+                console.error(err);
+            }
+            await getSingList();
+            if (singsList.length > 0) {
+                loadSing(flag);
+            }
+        }
     }, { once: true });
 }
 

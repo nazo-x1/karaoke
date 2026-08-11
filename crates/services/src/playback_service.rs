@@ -169,6 +169,31 @@ impl PlaybackService {
         }
     }
 
+    /// 客户端解码失败：强制触发兜底转码并跳过当前曲目。
+    pub async fn report_unplayable(&self, song_id: i64) -> ApiResult {
+        let history = match self.histories.get_optional(song_id).await {
+            Ok(Some(h)) => h,
+            Ok(None) => return ApiResult::fail("歌曲不在队列中"),
+            Err(e) => return ApiResult::fail(db_error_message(&e, "上报播放失败失败")),
+        };
+        match self.songs.get_optional(song_id).await {
+            Ok(Some(_)) => {}
+            Ok(None) => return ApiResult::fail("歌曲不在队列中"),
+            Err(e) => return ApiResult::fail(db_error_message(&e, "上报播放失败失败")),
+        }
+
+        let prep = self.prepare.schedule_force_fallback(song_id).await;
+        if let Err(e) = self.histories.mark_finished(song_id).await {
+            return ApiResult::fail(db_error_message(&e, "标记已唱完失败"));
+        }
+        self.events.publish_queue_changed();
+
+        ApiResult::ok_msg_data(
+            format!("{} 播放失败，已跳过并后台转码", history.name),
+            serde_json::json!({ "prepare": prep }),
+        )
+    }
+
     pub fn send_command(&self, code: i32, data: serde_json::Value) -> ApiResult {
         self.events.publish(code, data);
         ApiResult::ok()

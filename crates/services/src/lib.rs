@@ -18,6 +18,7 @@ pub use song_config_service::SongConfigService;
 
 use karaoke_events::EventBus;
 use karaoke_infra::repositories::{HistoryRepository, SongRepository};
+use karaoke_infra::scanner::ScanTaskManager;
 use karaoke_infra::{AppConfig, MediaSettings, PlaybackResolver};
 use karaoke_jobs::PrepareTaskManager;
 use sqlx::PgPool;
@@ -43,8 +44,12 @@ impl AppServices {
         let media = MediaSettings::new(
             config.play_cache_path.clone(),
             config.prepare_max_concurrent,
+            config.probe_size,
+            config.analyze_duration,
+            config.transcode_max_height,
+            config.scan_validate_concurrency,
         );
-        let resolver = PlaybackResolver::new(config.override_path.clone(), media.clone());
+        let resolver = PlaybackResolver::new(media.clone());
         let events = EventBus::new(karaoke_events::DEFAULT_MAX_CLIENTS);
         let prepare = PrepareTaskManager::new(
             resolver.clone(),
@@ -52,20 +57,17 @@ impl AppServices {
             events.clone(),
             config.prepare_max_concurrent,
         );
+        let scan_tasks = ScanTaskManager::new();
 
         let scan_video_exts: HashSet<String> = config.scan_video_exts.iter().cloned().collect();
-        let skip_dir_names: HashSet<String> = [
-            config.keep_dir_name.clone(),
-            config.override_dir_name.clone(),
-        ]
-        .into_iter()
-        .collect();
+        let skip_dir_names: HashSet<String> = [config.keep_dir_name.clone()].into_iter().collect();
 
         let library = LibraryService {
             songs: songs.clone(),
             resolver: resolver.clone(),
             prepare: prepare.clone(),
             media: media.clone(),
+            scan_tasks,
             keep_path: config.keep_path.clone(),
             scan_video_exts,
             skip_dir_names,
@@ -112,5 +114,7 @@ impl AppServices {
 
     pub async fn init_on_startup(&self) {
         self.queue.init_on_startup().await;
+        // 启动期补偿：为未就绪的双轨歌曲调度音频抽取预热。
+        self.library.warmup_needing_prepare().await;
     }
 }

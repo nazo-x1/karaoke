@@ -12,8 +12,6 @@ pub struct FileConfig {
     pub path: PathBuf,
     #[serde(default)]
     pub keep_dir_name: Option<String>,
-    #[serde(default)]
-    pub override_dir_name: Option<String>,
     #[serde(default = "default_scan_video_exts")]
     pub scan_video_exts: Vec<String>,
     #[serde(default = "default_true")]
@@ -24,6 +22,14 @@ pub struct FileConfig {
     pub log_level: Option<String>,
     #[serde(default = "default_prepare_concurrent")]
     pub prepare_max_concurrent: usize,
+    #[serde(default = "default_transcode_max_height")]
+    pub transcode_max_height: u32,
+    #[serde(default = "default_probe_size")]
+    pub probe_size: u64,
+    #[serde(default = "default_analyze_duration")]
+    pub analyze_duration: u64,
+    #[serde(default = "default_scan_validate_concurrency")]
+    pub scan_validate_concurrency: usize,
 }
 
 fn default_port() -> u16 {
@@ -39,6 +45,18 @@ fn default_duplicate_policy() -> String {
     "skip".to_string()
 }
 fn default_prepare_concurrent() -> usize {
+    1
+}
+fn default_transcode_max_height() -> u32 {
+    1080
+}
+fn default_probe_size() -> u64 {
+    2_000_000
+}
+fn default_analyze_duration() -> u64 {
+    2_000_000
+}
+fn default_scan_validate_concurrency() -> usize {
     2
 }
 
@@ -48,16 +66,18 @@ pub struct AppConfig {
     pub port: u16,
     pub data_path: PathBuf,
     pub keep_path: PathBuf,
-    pub override_path: PathBuf,
     pub play_cache_path: PathBuf,
     pub embedded_cache_path: PathBuf,
     pub keep_dir_name: String,
-    pub override_dir_name: String,
     pub scan_video_exts: Vec<String>,
     pub ffprobe_on_import: bool,
     pub default_duplicate_policy: String,
     pub log_level: String,
     pub prepare_max_concurrent: usize,
+    pub transcode_max_height: u32,
+    pub probe_size: u64,
+    pub analyze_duration: u64,
+    pub scan_validate_concurrency: usize,
     pub database_url: String,
 }
 
@@ -76,18 +96,12 @@ impl AppConfig {
             .keep_dir_name
             .clone()
             .unwrap_or_else(|| "__keep__".to_string());
-        let override_dir_name = file
-            .override_dir_name
-            .clone()
-            .unwrap_or_else(|| "__override__".to_string());
 
         let keep_path = file.path.join(&keep_dir_name);
-        let override_path = file.path.join(&override_dir_name);
         let play_cache_path = file.path.join("__play_cache__");
         let embedded_cache_path = play_cache_path.join("embedded");
 
         std::fs::create_dir_all(&keep_path)?;
-        std::fs::create_dir_all(&override_path)?;
         std::fs::create_dir_all(&play_cache_path)?;
         std::fs::create_dir_all(&embedded_cache_path)?;
 
@@ -103,16 +117,18 @@ impl AppConfig {
             port: file.port,
             data_path: file.path,
             keep_path,
-            override_path,
             play_cache_path,
             embedded_cache_path,
             keep_dir_name,
-            override_dir_name,
             scan_video_exts: file.scan_video_exts,
             ffprobe_on_import: file.ffprobe_on_import,
             default_duplicate_policy: file.default_duplicate_policy,
             log_level: file.log_level.unwrap_or_else(|| "info".to_string()),
             prepare_max_concurrent,
+            transcode_max_height: file.transcode_max_height.max(1),
+            probe_size: file.probe_size.max(32_768),
+            analyze_duration: file.analyze_duration.max(100_000),
+            scan_validate_concurrency: file.scan_validate_concurrency.max(1),
             database_url,
         })
     }

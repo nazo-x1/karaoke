@@ -15,6 +15,9 @@ async fn run_ffprobe(settings: &MediaSettings, args: &[&str]) -> Option<Value> {
 
     let mut cmd = Command::new("ffprobe");
     cmd.arg("-v").arg("error");
+    cmd.arg("-probesize").arg(settings.probe_size.to_string());
+    cmd.arg("-analyzeduration")
+        .arg(settings.analyze_duration.to_string());
     cmd.args(args);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -60,22 +63,7 @@ async fn run_ffprobe(settings: &MediaSettings, args: &[&str]) -> Option<Value> {
     }
 }
 
-pub async fn probe_streams(settings: &MediaSettings, file_path: &str) -> Vec<StreamInfo> {
-    let data = run_ffprobe(
-        settings,
-        &[
-            "-show_entries",
-            "stream=index,codec_type,codec_name,width,height,pix_fmt",
-            "-show_entries",
-            "stream_disposition=attached_pic",
-            "-of",
-            "json",
-            file_path,
-        ],
-    )
-    .await;
-
-    let Some(data) = data else { return vec![] };
+fn parse_streams(data: &Value) -> Vec<StreamInfo> {
     let Some(streams) = data.get("streams").and_then(|s| s.as_array()) else {
         return vec![];
     };
@@ -111,18 +99,38 @@ pub async fn probe_streams(settings: &MediaSettings, file_path: &str) -> Vec<Str
         .collect()
 }
 
+pub async fn probe_streams(settings: &MediaSettings, file_path: &str) -> Vec<StreamInfo> {
+    let data = run_ffprobe(
+        settings,
+        &[
+            "-show_entries",
+            "stream=index,codec_type,codec_name,width,height,pix_fmt",
+            "-show_entries",
+            "stream_disposition=attached_pic",
+            "-of",
+            "json",
+            file_path,
+        ],
+    )
+    .await;
+
+    let Some(data) = data else { return vec![] };
+    parse_streams(&data)
+}
+
 pub async fn probe_media_info(settings: &MediaSettings, file_path: &str) -> Option<MediaInfo> {
     if !Path::new(file_path).is_file() {
         return None;
     }
-    let streams = probe_streams(settings, file_path).await;
-    if streams.is_empty() {
-        return None;
-    }
 
+    // 合并 stream + format 为单次 ffprobe，避免每个文件两次子进程。
     let data = run_ffprobe(
         settings,
         &[
+            "-show_entries",
+            "stream=index,codec_type,codec_name,width,height,pix_fmt",
+            "-show_entries",
+            "stream_disposition=attached_pic",
             "-show_entries",
             "format=format_name,duration",
             "-of",
@@ -130,8 +138,14 @@ pub async fn probe_media_info(settings: &MediaSettings, file_path: &str) -> Opti
             file_path,
         ],
     )
-    .await;
-    let fmt = data.as_ref().and_then(|d| d.get("format"));
+    .await?;
+
+    let streams = parse_streams(&data);
+    if streams.is_empty() {
+        return None;
+    }
+
+    let fmt = data.get("format");
     let duration = fmt
         .and_then(|f| f.get("duration"))
         .and_then(Value::as_str)
@@ -161,9 +175,10 @@ pub async fn probe_media_info(settings: &MediaSettings, file_path: &str) -> Opti
     })
 }
 
+/// K 歌场景：有音频流且 duration > 0 即可唱；视频缺失只影响 MV 显示。
 pub async fn probe_video_playable(settings: &MediaSettings, file_path: &str) -> bool {
     match probe_media_info(settings, file_path).await {
-        Some(info) => info.has_video && info.duration > 0.0,
+        Some(info) => info.has_audio && info.duration > 0.0,
         None => false,
     }
 }

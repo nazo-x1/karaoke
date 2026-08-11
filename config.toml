@@ -11,12 +11,12 @@ path = "/KTV"
 
 # 扫描时跳过的目录名（任意嵌套层级）。
 keep_dir_name = "__keep__"
-override_dir_name = "__override__"
 
 # 扫描/上传允许的视频扩展名。
 scan_video_exts = ["mp4", "mkv", "avi", "mov", "webm", "m4v"]
 
-# 导入时是否 ffprobe 校验。
+# 导入时是否 ffprobe 校验（有音频流且 duration>0）。
+# 正式扫描：落库后后台校验；预览：同步并发校验。
 ffprobe_on_import = true
 
 # 去重策略：skip | overwrite | rename
@@ -26,4 +26,15 @@ default_duplicate_policy = "skip"
 log_level = "info"
 
 # 同时进行的播放资源准备（ffmpeg）任务数；优先使用环境变量 PREPARE_MAX_CONCURRENT。
-prepare_max_concurrent = 2
+# 默认为 1：主动 prepare 仅做双轨音频抽取；兜底转码由播放失败上报触发，属低频路径。
+prepare_max_concurrent = 1
+
+# 兜底转码分辨率上限（高度，像素）；超出则缩放。
+transcode_max_height = 1080
+
+# ffprobe 探测上限（字节 / 微秒），加速缺索引文件；过小可能影响 duration/流信息完整性。
+probe_size = 2000000
+analyze_duration = 2000000
+
+# 扫描校验阶段的有限并发（机械盘建议 2）。
+scan_validate_concurrency = 2

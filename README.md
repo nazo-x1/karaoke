@@ -18,6 +18,15 @@ karaoke-app       主程序：配置/tracing/装配/启动 HTTP 服务
             └─ karaoke-jobs      prepare 后台任务队列（并发限制+终态 TTL 清理）
 ```
 
+## 播放模型
+
+- **plain**：单轨源文件，默认直发；客户端（Android ExoPlayer / 浏览器）解码失败时调用
+  `POST /api/v1/playback/songs/{id}/report-unplayable`，服务端跳过当前曲并强制后台生成
+  `__play_cache__` 兜底 mp4；下次点歌若缓存就绪则自动走缓存。
+- **embedded（双轨）**：源文件含原唱/伴奏两路音频时进入增强模式。视频同样默认直发源文件；
+  prepare 只抽取两路小音频文件（兼容编码时 `-c:a copy`），避免三个播放器重复读大文件。
+- 已移除 `__override__` 三件套。旧数据请手动 remux 成单个双轨文件后迁入曲库（无需 DB 迁移）。
+
 ## 本地开发
 
 ```bash
@@ -38,9 +47,13 @@ cargo run -p karaoke-app
 `config.toml`（详见文件内注释）+ 环境变量覆盖：
 
 - `DATABASE_URL`，或 `POSTGRES_HOST`/`POSTGRES_PORT`/`POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`
-- `PREPARE_MAX_CONCURRENT`：同时进行的播放资源准备（ffmpeg）任务数
+- `PREPARE_MAX_CONCURRENT`：同时进行的播放资源准备（ffmpeg）任务数（默认 1）
+- `transcode_max_height`：兜底转码分辨率上限（默认 1080）
+- `probe_size` / `analyze_duration`：ffprobe 探测上限
+- `scan_validate_concurrency`：扫描校验并发（默认 2）
 
-与 V1 的环境变量约定保持一致，`docker-compose.yml` 无需改动拓扑即可切换。
+扫描：`POST /library/scan` 先落库后返回；若开启校验，ffprobe 在后台跑，进度见
+`GET /library/scan/status`（`total`/`done`/`invalid`/`running`）。
 
 ## 数据库迁移
 
@@ -59,16 +72,13 @@ docker build \
 
 多阶段构建：builder 阶段 `cargo build --release`，运行阶段基于 `debian:bookworm-slim` + 系统 `ffmpeg`。
 
-## 与 V1 的差异（内部实现，不影响外部契约）
+## 与 V1 的差异（内部实现）
 
 - 数据库 schema 重新设计（`audio_layout` 由 `TEXT` 改为 `JSONB`，补充索引）。
 - 配置文件格式由 `config.conf`（ini）改为 `config.toml`。
-- ffmpeg/ffprobe 全部异步执行 + 硬超时 + 信号量限流，修复卡死子进程拖垮服务的问题。
-- SSE 显式连接数上限 + 死连接自动清理 + `Lagged` 时补发 resync 提示。
-- prepare 后台任务状态使用终态 TTL 清理，避免无限增长。
-
-对外路由路径、`ApiResult` envelope 字段名、SSE 事件码语义均保持不变，前端（独立的 `rc/` 仓库、本仓库内
-`static/js`）无需改动。
+- ffmpeg/ffprobe 全部异步执行 + 硬超时 + 信号量限流。
+- 播放默认直发源文件，不再用 ffprobe 预判浏览器兼容性；失败上报触发兜底转码。
+- 扫描落库与校验解耦，校验进度可轮询。
 
 ## 回滚
 

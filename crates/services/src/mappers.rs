@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use karaoke_domain::audio_layout::layout_summary;
-use karaoke_domain::playback::{effective_mode, OverrideStatus, PlaybackProfile, SongMeta};
+use karaoke_domain::playback::{effective_mode, PlaybackProfile, SongMeta};
 use karaoke_infra::models::{HistoryRow, SongRow};
 use serde::Serialize;
 
@@ -64,46 +64,21 @@ pub fn song_item(
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct OverrideFilesStatus {
-    pub video: bool,
-    pub vocals: bool,
-    pub accompaniment: bool,
-}
-
-impl From<OverrideStatus> for OverrideFilesStatus {
-    fn from(s: OverrideStatus) -> Self {
-        Self {
-            video: s.video,
-            vocals: s.vocals,
-            accompaniment: s.accompaniment,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct PlaybackDetail {
     pub playback_mode: String,
     pub playback_source: String,
     pub can_queue: bool,
     pub embedded_cache_ready: bool,
     pub audio_layout: karaoke_domain::audio_layout::LayoutSummary,
-    pub override_files: OverrideFilesStatus,
-    pub override_complete: bool,
 }
 
-pub fn playback_detail(
-    song: &SongRow,
-    profile: &PlaybackProfile,
-    override_status: OverrideStatus,
-) -> PlaybackDetail {
+pub fn playback_detail(song: &SongRow, profile: &PlaybackProfile) -> PlaybackDetail {
     PlaybackDetail {
         playback_mode: effective_mode(profile, &song.playback_mode),
         playback_source: profile.playback_source.as_str().to_string(),
         can_queue: profile.can_queue,
         embedded_cache_ready: profile.embedded_cache_ready,
         audio_layout: layout_summary(song.layout()),
-        override_complete: override_status.complete(),
-        override_files: override_status.into(),
     }
 }
 

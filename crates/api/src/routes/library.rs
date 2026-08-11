@@ -99,6 +99,10 @@ pub async fn preview_scan(
         .into()
 }
 
+pub async fn scan_status(State(state): State<AppState>) -> ApiJson {
+    ApiResult::ok_with_data(state.services.library.scan_status()).into()
+}
+
 #[derive(Deserialize)]
 pub struct SongListQuery {
     #[serde(default)]

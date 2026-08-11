@@ -9,7 +9,7 @@ const ROLE_OPTIONS = [
 ];
 
 function sourceLabel(src) {
-    const map = { override: '增强(覆写)', embedded: '增强(内嵌)', plain: '仅播放' };
+    const map = { embedded: '增强(内嵌)', plain: '仅播放' };
     return map[src] || src;
 }
 
@@ -17,15 +17,12 @@ function renderMeta(data) {
     const mode = data.playback_mode === 'enhanced'
         ? sourceLabel(data.playback_source)
         : (data.can_queue ? '仅播放' : '不可用');
-    const of = data.override_files || {};
     const cache = data.embedded_cache_ready ? '已就绪' : '未生成';
     document.getElementById("song-meta").innerHTML =
         `来源：${data.source_origin === 'upload' ? '上传' : '扫描'}<br>` +
         `播放模式：${mode}<br>` +
         `可点歌：${data.can_queue ? '是' : '否'}<br>` +
-        `覆写三件套：${data.override_complete ? '齐全（优先）' : '未齐全'}<br>` +
-        `内嵌缓存：${cache}<br>` +
-        `覆写文件：视频 ${of.video ? '✓' : '×'} / 人声 ${of.vocals ? '✓' : '×'} / 伴奏 ${of.accompaniment ? '✓' : '×'}`;
+        `双轨音频缓存：${cache}`;
 }
 
 function renderTracks(audioLayout) {

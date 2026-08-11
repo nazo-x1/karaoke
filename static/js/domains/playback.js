@@ -25,6 +25,9 @@ window.KTV = window.KTV || {};
         skipUnready: function (songId) {
             return KTV.http.post(KTV.config.apiBase + '/playback/session/skip-unready/' + songId);
         },
+        reportUnplayable: function (songId) {
+            return KTV.http.post(KTV.config.apiBase + '/playback/songs/' + songId + '/report-unplayable');
+        },
         waitUntilReady: async function (songId) {
             var prep = (await KTV.playback.schedulePrepare(songId)).data;
             if (prep.ready) return prep;

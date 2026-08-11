@@ -119,3 +119,12 @@ pub async fn skip_if_not_ready(State(state): State<AppState>, Path(song_id): Pat
         .await
         .into()
 }
+
+pub async fn report_unplayable(State(state): State<AppState>, Path(song_id): Path<i64>) -> ApiJson {
+    state
+        .services
+        .playback
+        .report_unplayable(song_id)
+        .await
+        .into()
+}

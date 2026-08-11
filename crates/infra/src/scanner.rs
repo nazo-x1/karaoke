@@ -3,9 +3,11 @@
 use crate::media::{probe_video_playable, MediaSettings};
 use crate::models::NewSong;
 use crate::repositories::SongRepository;
+use futures::stream::{self, StreamExt};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tracing::info;
 
@@ -15,6 +17,8 @@ const PREVIEW_LIMIT: usize = 200;
 pub enum ScanError {
     #[error("扫描路径不存在或不可读: {0}")]
     RootNotFound(String),
+    #[error("已有扫描任务正在运行")]
+    Busy,
     #[error(transparent)]
     Db(#[from] sqlx::Error),
 }
@@ -33,6 +37,9 @@ pub struct ScanStats {
     pub skipped: i64,
     pub renamed: i64,
     pub invalid: i64,
+    /// 落库后待后台校验的文件数（validate=true 时）。
+    #[serde(default)]
+    pub pending_validate: i64,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub preview: Vec<PreviewItem>,
 }
@@ -45,8 +52,60 @@ impl ScanStats {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ScanValidateStatus {
+    pub running: bool,
+    pub total: i64,
+    pub done: i64,
+    pub invalid: i64,
+}
+
+/// 扫描校验后台进度（同一时间通常只有一个扫描校验在跑）。
+#[derive(Clone, Default)]
+pub struct ScanTaskManager {
+    inner: Arc<Mutex<ScanValidateStatus>>,
+}
+
+impl ScanTaskManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn status(&self) -> ScanValidateStatus {
+        self.inner.lock().unwrap().clone()
+    }
+
+    fn try_begin(&self, total: i64) -> bool {
+        let mut g = self.inner.lock().unwrap();
+        if g.running {
+            return false;
+        }
+        *g = ScanValidateStatus {
+            running: true,
+            total,
+            done: 0,
+            invalid: 0,
+        };
+        true
+    }
+
+    fn tick(&self, invalid: bool) {
+        let mut g = self.inner.lock().unwrap();
+        g.done += 1;
+        if invalid {
+            g.invalid += 1;
+        }
+    }
+
+    fn finish(&self) {
+        let mut g = self.inner.lock().unwrap();
+        g.running = false;
+    }
+}
+
 pub struct ScanOptions {
     pub duplicate_policy: String,
+    /// 同步校验（预览用）；正式扫描应设 false，校验改走后台。
     pub validate: bool,
     pub dry_run: bool,
 }
@@ -125,6 +184,12 @@ fn make_unique_display_name(
     }
 }
 
+/// 正式扫描结果：统计 + 待后台校验的 source_path 列表。
+pub struct ScanPersistResult {
+    pub stats: ScanStats,
+    pub paths_to_validate: Vec<String>,
+}
+
 pub async fn scan_root(
     settings: &MediaSettings,
     songs: &SongRepository,
@@ -132,7 +197,7 @@ pub async fn scan_root(
     video_exts: &HashSet<String>,
     skip_dir_names: &HashSet<String>,
     options: ScanOptions,
-) -> Result<ScanStats, ScanError> {
+) -> Result<ScanPersistResult, ScanError> {
     let root_path =
         std::fs::canonicalize(root).map_err(|_| ScanError::RootNotFound(root.to_string()))?;
     if !root_path.is_dir() {
@@ -163,9 +228,32 @@ pub async fn scan_root(
     };
     info!("scan collect: root={root_str} files={}", files.len());
 
+    // 预览且需要校验：先并发探测，再走决策逻辑。
+    let mut playable_map: HashMap<String, bool> = HashMap::new();
+    if options.validate && options.dry_run {
+        let concurrency = settings.scan_validate_concurrency;
+        let paths: Vec<String> = files
+            .iter()
+            .map(|(p, _)| p.to_string_lossy().to_string())
+            .collect();
+        let results: Vec<(String, bool)> = stream::iter(paths)
+            .map(|path| {
+                let settings = settings.clone();
+                async move {
+                    let ok = probe_video_playable(&settings, &path).await;
+                    (path, ok)
+                }
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+        playable_map.extend(results);
+    }
+
     let mut stats = ScanStats::default();
     let mut to_create: Vec<NewSong> = Vec::new();
     let mut overwrite_updates: Vec<(i64, NewSong)> = Vec::new();
+    let mut paths_to_validate: Vec<String> = Vec::new();
 
     for (abs_path, dirpath) in files {
         let abs_path_str = abs_path.to_string_lossy().to_string();
@@ -183,21 +271,22 @@ pub async fn scan_root(
             source_rel = String::new();
         }
 
-        let mut is_playable = true;
-        if options.validate {
-            is_playable = probe_video_playable(settings, &abs_path_str).await;
-            if !is_playable {
+        // 正式扫描：暂标可播，校验后台补齐；预览：同步用探测结果。
+        let is_playable = if options.validate && options.dry_run {
+            let ok = playable_map.get(&abs_path_str).copied().unwrap_or(false);
+            if !ok {
                 stats.invalid += 1;
-                if options.dry_run {
-                    stats.push_preview(PreviewItem {
-                        path: abs_path_str.clone(),
-                        action: "invalid".to_string(),
-                        display_name: None,
-                    });
-                }
+                stats.push_preview(PreviewItem {
+                    path: abs_path_str.clone(),
+                    action: "invalid".to_string(),
+                    display_name: None,
+                });
                 continue;
             }
-        }
+            true
+        } else {
+            true
+        };
 
         if let Some(&existing_id) = existing_by_path.get(&abs_path_str) {
             if options.duplicate_policy == "overwrite" {
@@ -223,6 +312,9 @@ pub async fn scan_root(
                             scan_root: Some(root_str.clone()),
                         },
                     ));
+                    if options.validate {
+                        paths_to_validate.push(abs_path_str.clone());
+                    }
                 }
                 stats.added += 1;
             } else {
@@ -276,6 +368,9 @@ pub async fn scan_root(
                             }
                             existing_by_path.remove(existing_path);
                             existing_by_path.insert(abs_path_str.clone(), 0);
+                            if options.validate {
+                                paths_to_validate.push(abs_path_str.clone());
+                            }
                         }
                         stats.added += 1;
                         if options.dry_run {
@@ -329,7 +424,10 @@ pub async fn scan_root(
             is_playable,
             scan_root: Some(root_str.clone()),
         });
-        existing_by_path.insert(abs_path_str, 0);
+        existing_by_path.insert(abs_path_str.clone(), 0);
+        if options.validate {
+            paths_to_validate.push(abs_path_str);
+        }
         stats.added += 1;
     }
 
@@ -350,10 +448,54 @@ pub async fn scan_root(
                 .await?;
         }
         info!(
-            "scan persist: root={root_str} created={} updated_or_overwritten>=0",
-            stats.added
+            "scan persist: root={root_str} created={} pending_validate={}",
+            stats.added,
+            paths_to_validate.len()
         );
     }
 
-    Ok(stats)
+    stats.pending_validate = paths_to_validate.len() as i64;
+    Ok(ScanPersistResult {
+        stats,
+        paths_to_validate,
+    })
+}
+
+/// 后台并发校验：更新 is_playable / can_queue。
+pub async fn run_validate_paths(
+    settings: &MediaSettings,
+    songs: &SongRepository,
+    task: &ScanTaskManager,
+    paths: Vec<String>,
+) {
+    if paths.is_empty() {
+        return;
+    }
+    if !task.try_begin(paths.len() as i64) {
+        tracing::warn!("scan validate skipped: another task is running");
+        return;
+    }
+
+    let concurrency = settings.scan_validate_concurrency;
+    stream::iter(paths)
+        .map(|path| {
+            let settings = settings.clone();
+            let songs = songs.clone();
+            let task = task.clone();
+            async move {
+                let ok = probe_video_playable(&settings, &path).await;
+                if let Ok(Some(song)) = songs.find_by_source_path(&path).await {
+                    if let Err(e) = songs.update_playable_flags(song.id, ok, ok).await {
+                        tracing::warn!("update playable flags failed for {}: {e}", song.id);
+                    }
+                }
+                task.tick(!ok);
+            }
+        })
+        .buffer_unordered(concurrency)
+        .collect::<Vec<_>>()
+        .await;
+
+    task.finish();
+    info!("scan validate finished: {:?}", task.status());
 }

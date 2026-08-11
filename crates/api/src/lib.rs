@@ -35,6 +35,7 @@ pub fn build_router(
         )
         .route("/library/scan", post(routes::library::run_scan))
         .route("/library/scan/preview", get(routes::library::preview_scan))
+        .route("/library/scan/status", get(routes::library::scan_status))
         .route("/library/songs", get(routes::library::get_list))
         .route(
             "/library/songs/:song_id",
@@ -83,6 +84,10 @@ pub fn build_router(
         .route(
             "/playback/session/skip-unready/:song_id",
             post(routes::playback::skip_if_not_ready),
+        )
+        .route(
+            "/playback/songs/:song_id/report-unplayable",
+            post(routes::playback::report_unplayable),
         )
         .route("/events", get(routes::events::sse_events))
         .route("/events/command", post(routes::events::send_command))

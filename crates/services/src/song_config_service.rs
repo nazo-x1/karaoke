@@ -29,8 +29,7 @@ impl SongConfigService {
             Err(e) => return ApiResult::fail(db_error_message(&e, "获取歌曲详情失败")),
         };
         let profile = self.resolver.resolve(&song).await;
-        let override_status = self.resolver.override_file_status(&song.display_name).await;
-        let detail = playback_detail(&song, &profile, override_status);
+        let detail = playback_detail(&song, &profile);
         let mut value = serde_json::to_value(detail).unwrap_or(Value::Null);
         if let Value::Object(map) = &mut value {
             map.insert("id".to_string(), serde_json::json!(song.id));
@@ -125,11 +124,9 @@ impl SongConfigService {
             Err(e) => return ApiResult::fail(db_error_message(&e, "检测播放能力失败")),
         };
 
-        if !self.resolver.override_complete(&song.display_name).await {
-            let layout = probe_layout(&self.resolver.media, &song.source_path, "auto").await;
-            if let Err(e) = self.songs.update_audio_layout(song_id, &layout).await {
-                tracing::warn!("persist audio_layout failed for song {song_id}: {e}");
-            }
+        let layout = probe_layout(&self.resolver.media, &song.source_path, "auto").await;
+        if let Err(e) = self.songs.update_audio_layout(song_id, &layout).await {
+            tracing::warn!("persist audio_layout failed for song {song_id}: {e}");
         }
 
         let song = self.songs.get(song_id).await.unwrap_or(song);
@@ -148,8 +145,7 @@ impl SongConfigService {
         }
         let song = self.songs.get(song_id).await.unwrap_or(song);
 
-        let override_status = self.resolver.override_file_status(&song.display_name).await;
-        let detail = playback_detail(&song, &profile, override_status);
+        let detail = playback_detail(&song, &profile);
         let mut data = serde_json::to_value(&detail).unwrap_or(Value::Null);
 
         if self.resolver.needs_prepare(&song, &profile).await {
@@ -170,13 +166,6 @@ impl SongConfigService {
             Ok(None) => return ApiResult::fail("歌曲不存在"),
             Err(e) => return ApiResult::fail(db_error_message(&e, "预生成缓存失败")),
         };
-
-        if self.resolver.override_complete(&song.display_name).await {
-            let profile = self.resolver.resolve(&song).await;
-            let override_status = self.resolver.override_file_status(&song.display_name).await;
-            let detail = playback_detail(&song, &profile, override_status);
-            return ApiResult::ok_msg_data("已有 __override__ 三件套，无需预生成内嵌缓存", detail);
-        }
 
         let mut prep = self.prepare.schedule(song_id).await;
         if wait {
@@ -201,8 +190,7 @@ impl SongConfigService {
             tracing::warn!("persist playback meta failed for song {song_id}: {e}");
         }
 
-        let override_status = self.resolver.override_file_status(&song.display_name).await;
-        let detail = playback_detail(&song, &profile, override_status);
+        let detail = playback_detail(&song, &profile);
         let mut data = serde_json::to_value(&detail).unwrap_or(Value::Null);
         if let Value::Object(map) = &mut data {
             map.insert(

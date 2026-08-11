@@ -17,6 +17,9 @@ window.KTV = window.KTV || {};
         scan: function (body) {
             return KTV.http.post(base() + '/scan', JSON.stringify(body), 'application/json');
         },
+        scanStatus: function () {
+            return KTV.http.get(base() + '/scan/status');
+        },
         list: function (page, q) {
             return KTV.http.get(base() + '/songs', { page: page, q: q || '' });
         },
